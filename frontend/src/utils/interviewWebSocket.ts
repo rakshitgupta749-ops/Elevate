@@ -30,6 +30,11 @@ export interface WebSocketTranscript {
   role: 'user' | 'ai';
 }
 
+export interface WebSocketTranscriptEmpty {
+  type: 'transcript_empty';
+  reason?: string;
+}
+
 export interface WebSocketBargeInFlush {
   type: 'barge_in_flush';
   timestamp: number;
@@ -47,6 +52,7 @@ export interface InterviewWebSocketHandlers {
   onTextDelta?: (data: WebSocketTextDelta) => void;
   onTurnComplete?: (data: WebSocketTurnComplete) => void;
   onTranscript?: (data: WebSocketTranscript) => void;
+  onTranscriptEmpty?: (data: WebSocketTranscriptEmpty) => void;
   onBargeInFlush?: (data: WebSocketBargeInFlush) => void;
   onSessionTerminated?: (data: WebSocketSessionTerminated) => void;
   onError?: (err: any) => void;
@@ -57,15 +63,18 @@ export interface InterviewWebSocketHandlers {
 export class InterviewWebSocketClient {
   private ws: WebSocket | null = null;
   private url: string;
+  private sessionId: string;
+  private currentVoice: string;
   private handlers: InterviewWebSocketHandlers;
   private isExplicitlyClosed: boolean = false;
   private pingInterval: any = null;
 
-  constructor(sessionId: string, handlers: InterviewWebSocketHandlers) {
+  constructor(sessionId: string, handlers: InterviewWebSocketHandlers, voiceId: string = 'am_onyx') {
+    this.sessionId = sessionId;
+    this.currentVoice = voiceId;
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const host = window.location.hostname || 'localhost';
-    const port = '8000';
-    this.url = `${protocol}//${host}:${port}/api/ws/interview/${encodeURIComponent(sessionId)}`;
+    const host = window.location.host;
+    this.url = `${protocol}//${host}/api/ws/interview/${encodeURIComponent(sessionId)}?voice=${encodeURIComponent(voiceId)}`;
     this.handlers = handlers;
   }
 
@@ -98,6 +107,8 @@ export class InterviewWebSocketClient {
             this.handlers.onTurnComplete?.(data);
           } else if (type === 'transcript') {
             this.handlers.onTranscript?.(data);
+          } else if (type === 'transcript_empty') {
+            this.handlers.onTranscriptEmpty?.(data);
           } else if (type === 'barge_in_flush') {
             console.warn(`[InterviewWebSocket] Control Frame: BARGE-IN FLUSH received! Count: ${data.interruption_count}`);
             this.handlers.onBargeInFlush?.(data);
@@ -107,7 +118,7 @@ export class InterviewWebSocketClient {
             console.error('[InterviewWebSocket] Server error frame:', data.error);
             this.handlers.onError?.(data.error);
           }
-        } catch (e) {
+        } catch {
           console.debug('[InterviewWebSocket] Non-JSON message received:', event.data);
         }
       };
@@ -138,8 +149,29 @@ export class InterviewWebSocketClient {
     return false;
   }
 
-  public sendText(message: string): boolean {
-    return this.send({ type: 'text', message });
+  public sendText(message: string, speechDurationSec?: number): boolean {
+    return this.send({
+      type: 'text',
+      message,
+      ...(speechDurationSec && speechDurationSec > 0
+        ? { speech_duration_sec: Number(speechDurationSec.toFixed(2)) }
+        : {}),
+    });
+  }
+
+  public sendAudio(base64Data: string): boolean {
+    return this.send({
+      type: 'audio',
+      data: base64Data,
+    });
+  }
+
+  public sendBinaryAudio(data: ArrayBuffer | Blob): boolean {
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.ws.send(data);
+      return true;
+    }
+    return false;
   }
 
   public sendPlaybackStart(): boolean {
@@ -156,6 +188,22 @@ export class InterviewWebSocketClient {
 
   public sendSpeechStart(): boolean {
     return this.send({ type: 'user_speech_start' });
+  }
+
+  public setVoice(voiceId: string): void {
+    this.currentVoice = voiceId;
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const host = window.location.host;
+    this.url = `${protocol}//${host}/api/ws/interview/${encodeURIComponent(this.sessionId)}?voice=${encodeURIComponent(voiceId)}`;
+    this.send({ type: 'set_voice', voice: voiceId });
+  }
+
+  public sendVoice(voiceId: string): boolean {
+    return this.send({ type: 'set_voice', voice: voiceId });
+  }
+
+  public getVoice(): string {
+    return this.currentVoice;
   }
 
   public isConnected(): boolean {

@@ -43,7 +43,7 @@ def get_analyzer_llm() -> ChatOpenAI:
     return ChatOpenAI(
         base_url="https://genailab.tcs.in",
         model="azure/genailab-maas-gpt-4o-mini",
-        api_key=os.getenv("TCS_API_KEY"),
+        api_key=os.getenv("TCS_API_KEY"),  # type: ignore[arg-type]
         http_client=client,
         temperature=0.0,
     )
@@ -221,7 +221,7 @@ JSON SCHEMA TEMPLATE TO POPULATE:
         ]
 
         response = llm.invoke(messages)
-        content = response.content.strip()
+        content = str(response.content).strip()
 
         # Clean potential markdown wrapping ```json ... ```
         if content.startswith("```"):

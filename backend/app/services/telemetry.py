@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field
 
 logger = logging.getLogger("elevate.telemetry")
 
+sf: Any = None
 try:
     import soundfile as sf
     HAS_SOUNDFILE = True

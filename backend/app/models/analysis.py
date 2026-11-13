@@ -54,7 +54,7 @@ class CandidateClaim(BaseModel):
     is_quantitative: bool = Field(default=False, description="Whether the claim includes specific numbers, percentages, or metrics")
     confidence: float = Field(default=0.80, ge=0.0, le=1.0, description="Confidence in claim extraction [0.0, 1.0]")
     source_turn: int = Field(..., ge=0, description="Turn number where the claim was made")
-    evidence: Optional[str] = Field(None, description="Supporting excerpt if provided")
+    evidence: Optional[str] = Field(default=None, description="Supporting excerpt if provided")
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -135,7 +135,7 @@ class SemanticClassificationEvidence(BaseModel):
     """Inspectable evidence supporting a key semantic determination."""
     criterion: str = Field(..., description="Target criterion or behavior name")
     detected: bool = Field(..., description="Whether this criterion was detected")
-    evidence: Optional[str] = Field(None, description="Verbatim quote or excerpt demonstrating detection")
+    evidence: Optional[str] = Field(default=None, description="Verbatim quote or excerpt demonstrating detection")
     confidence: float = Field(default=0.80, ge=0.0, le=1.0, description="Confidence in this extraction [0.0, 1.0]")
 
 

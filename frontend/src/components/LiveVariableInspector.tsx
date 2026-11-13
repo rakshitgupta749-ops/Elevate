@@ -12,7 +12,8 @@ import {
   AlertCircle, 
   Clock, 
   Cpu,
-  Layers
+  Layers,
+  FileText
 } from 'lucide-react';
 import { getSessionLiveState } from '../api/apiClient';
 
@@ -21,6 +22,7 @@ interface LiveVariableInspectorProps {
   isOpen: boolean;
   onClose: () => void;
   lastTurnTrigger?: number; // increments when a turn finishes to auto-refresh
+  messages?: Array<{ id: string; sender: 'user' | 'ai'; text: string }>;
 }
 
 const PERCEPTION_METRICS = [
@@ -39,10 +41,11 @@ export const LiveVariableInspector: React.FC<LiveVariableInspectorProps> = ({
   isOpen,
   onClose,
   lastTurnTrigger = 0,
+  messages = [],
 }) => {
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState<boolean>(false);
-  const [activeTab, setActiveTab] = useState<'perception' | 'traits' | 'stages' | 'history'>('perception');
+  const [activeTab, setActiveTab] = useState<'perception' | 'traits' | 'stages' | 'history' | 'transcript'>('perception');
   const [lastRefreshed, setLastRefreshed] = useState<Date>(new Date());
 
   const fetchLiveState = useCallback(async () => {
@@ -206,6 +209,16 @@ export const LiveVariableInspector: React.FC<LiveVariableInspectorProps> = ({
               }`}
             >
               <Clock size={14} /> Trajectory ({stateHistory.length})
+            </button>
+            <button
+              onClick={() => setActiveTab('transcript')}
+              className={`py-3 px-3.5 text-xs font-semibold border-b-2 transition-colors flex items-center gap-1.5 ${
+                activeTab === 'transcript'
+                  ? 'border-[var(--color-primary)] text-[var(--color-primary)] bg-white'
+                  : 'border-transparent text-slate-500 hover:text-slate-700'
+              }`}
+            >
+              <FileText size={14} /> Transcript ({messages.length})
             </button>
           </div>
 
@@ -458,6 +471,40 @@ export const LiveVariableInspector: React.FC<LiveVariableInspectorProps> = ({
                       );
                     })}
                   </div>
+                )}
+              </div>
+            )}
+
+            {/* TAB 5: Transcript */}
+            {activeTab === 'transcript' && (
+              <div className="space-y-3">
+                <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 flex items-center justify-between text-xs text-slate-600">
+                  <span>Session turns stream & candidate talk logs:</span>
+                  <span className="font-semibold text-slate-800">{messages.length} turns</span>
+                </div>
+                {messages.length === 0 ? (
+                  <p className="text-xs text-slate-400 text-center py-8">No transcript messages recorded yet.</p>
+                ) : (
+                  messages.map((m, i) => (
+                    <div
+                      key={m.id || i}
+                      className={`p-3.5 rounded-xl border text-xs ${
+                        m.sender === 'user'
+                          ? 'bg-sky-50/70 border-sky-200 text-slate-800'
+                          : 'bg-purple-50/70 border-purple-200 text-slate-800'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between font-bold mb-1.5 text-[11px]">
+                        <span className={m.sender === 'user' ? 'text-sky-700' : 'text-purple-700'}>
+                          Turn #{i + 1} - {m.sender === 'user' ? 'Candidate' : 'AI Executive'}
+                        </span>
+                        <span className="text-slate-400 font-normal font-mono">
+                          {m.text.trim().split(/\s+/).filter(Boolean).length} words
+                        </span>
+                      </div>
+                      <p className="leading-relaxed whitespace-pre-wrap">{m.text}</p>
+                    </div>
+                  ))
                 )}
               </div>
             )}

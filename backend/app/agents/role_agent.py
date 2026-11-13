@@ -1,6 +1,6 @@
 import os
 import operator
-from typing import Annotated, Sequence, TypedDict, Optional, List, Any, Union, Dict
+from typing import Annotated, Sequence, TypedDict, Optional, List, Any, Union, Dict, cast
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage
 from langgraph.graph import StateGraph, END
 from langgraph.prebuilt import ToolNode
@@ -98,6 +98,7 @@ class RoleAgent:
         memory_mode: str = "full",
         architecture_mode: str = "FULL_SIMULATOR",
         persona_configuration: Optional[Any] = None,
+        voice_profile: Optional[str] = None,
     ):
         self.role_id = role_id
         self.topic = topic
@@ -108,6 +109,8 @@ class RoleAgent:
         self.policy_mode = policy_mode
         self.memory_mode = memory_mode
         self.architecture_mode = architecture_mode
+        self.voice_profile = voice_profile or "am_onyx"
+        self.voice_id = self.voice_profile
 
         # Phase 9: Resolve concrete PersonaConfiguration
         if isinstance(persona_configuration, PersonaConfiguration):
@@ -121,7 +124,15 @@ class RoleAgent:
                 schema_version=persona_configuration.get("persona_schema_version", "1.0"),
             )
         else:
-            self.persona_configuration = resolve_persona_configuration(role=self.role_id)
+            admin_cfg = storage.get_admin_role_configuration(self.role_id)
+            if admin_cfg and admin_cfg.get("traits"):
+                self.persona_configuration = resolve_persona_configuration(
+                    role=self.role_id,
+                    preset=admin_cfg.get("preset", "BALANCED"),
+                    custom_traits=admin_cfg.get("traits"),
+                )
+            else:
+                self.persona_configuration = resolve_persona_configuration(role=self.role_id)
 
         self.llm = get_llm()
         self.persona = get_persona(self.role_id, scenario=self.scenario)
@@ -264,12 +275,20 @@ class RoleAgent:
         else:
             interview_state = self.interview_state
 
-        # Determine candidate message
+        # Determine candidate message and recent AI context
         candidate_message = ""
         for m in reversed(messages):
             if isinstance(m, HumanMessage):
-                candidate_message = m.content
+                candidate_message = str(m.content)
                 break
+
+        recent_context = None
+        for m in reversed(messages):
+            if isinstance(m, AIMessage) and m.content:
+                recent_context = str(m.content)
+                break
+        if not recent_context and self._opening_message:
+            recent_context = self._opening_message
 
         new_turn = turn_count + 1
 
@@ -331,9 +350,9 @@ class RoleAgent:
             non_system_messages = [m for m in messages if not isinstance(m, SystemMessage)]
             full_messages = [SystemMessage(content=system_template)] + non_system_messages
             response = self.llm_with_tools.invoke(full_messages)
-            is_finished = "[END_INTERVIEW]" in response.content
-            if "[END_INTERVIEW]" in response.content:
-                response.content = response.content.replace("[END_INTERVIEW]", "").strip()
+            is_finished = "[END_INTERVIEW]" in str(response.content)
+            if "[END_INTERVIEW]" in str(response.content):
+                response.content = str(response.content).replace("[END_INTERVIEW]", "").strip()
             self.turn_count = new_turn
             return {
                 "messages": [response],
@@ -373,9 +392,9 @@ class RoleAgent:
             non_system_messages = [m for m in messages if not isinstance(m, SystemMessage)]
             full_messages = [SystemMessage(content=system_template)] + non_system_messages
             response = self.llm_with_tools.invoke(full_messages)
-            is_finished = "[END_INTERVIEW]" in response.content
-            if "[END_INTERVIEW]" in response.content:
-                response.content = response.content.replace("[END_INTERVIEW]", "").strip()
+            is_finished = "[END_INTERVIEW]" in str(response.content)
+            if "[END_INTERVIEW]" in str(response.content):
+                response.content = str(response.content).replace("[END_INTERVIEW]", "").strip()
             self.turn_count = new_turn
             return {
                 "messages": [response],
@@ -432,9 +451,9 @@ class RoleAgent:
             non_system_messages = [m for m in messages if not isinstance(m, SystemMessage)]
             full_messages = [SystemMessage(content=system_template)] + non_system_messages
             response = self.llm_with_tools.invoke(full_messages)
-            is_finished = "[END_INTERVIEW]" in response.content
-            if "[END_INTERVIEW]" in response.content:
-                response.content = response.content.replace("[END_INTERVIEW]", "").strip()
+            is_finished = "[END_INTERVIEW]" in str(response.content)
+            if "[END_INTERVIEW]" in str(response.content):
+                response.content = str(response.content).replace("[END_INTERVIEW]", "").strip()
             return {
                 "messages": [response],
                 "is_finished": is_finished,
@@ -496,9 +515,9 @@ class RoleAgent:
             non_system_messages = [m for m in messages if not isinstance(m, SystemMessage)]
             full_messages = [SystemMessage(content=system_template)] + non_system_messages
             response = self.llm_with_tools.invoke(full_messages)
-            is_finished = "[END_INTERVIEW]" in response.content or interview_state.status in [InterviewStatus.COMPLETED, InterviewStatus.TERMINATED]
-            if "[END_INTERVIEW]" in response.content:
-                response.content = response.content.replace("[END_INTERVIEW]", "").strip()
+            is_finished = "[END_INTERVIEW]" in str(response.content) or interview_state.status in [InterviewStatus.COMPLETED, InterviewStatus.TERMINATED]
+            if "[END_INTERVIEW]" in str(response.content):
+                response.content = str(response.content).replace("[END_INTERVIEW]", "").strip()
             return {
                 "messages": [response],
                 "is_finished": is_finished,
@@ -577,9 +596,9 @@ class RoleAgent:
             non_system_messages = [m for m in messages if not isinstance(m, SystemMessage)]
             full_messages = [SystemMessage(content=system_template)] + non_system_messages
             response = self.llm_with_tools.invoke(full_messages)
-            is_finished = "[END_INTERVIEW]" in response.content or is_terminated_by_policy or interview_state.status in [InterviewStatus.COMPLETED, InterviewStatus.TERMINATED]
-            if "[END_INTERVIEW]" in response.content:
-                response.content = response.content.replace("[END_INTERVIEW]", "").strip()
+            is_finished = "[END_INTERVIEW]" in str(response.content) or is_terminated_by_policy or interview_state.status in [InterviewStatus.COMPLETED, InterviewStatus.TERMINATED]
+            if "[END_INTERVIEW]" in str(response.content):
+                response.content = str(response.content).replace("[END_INTERVIEW]", "").strip()
             return {
                 "messages": [response],
                 "is_finished": is_finished,
@@ -608,6 +627,7 @@ class RoleAgent:
             candidate_message=candidate_message,
             current_stage=stage_str,
             turn=new_turn,
+            recent_context=recent_context,
             known_facts=self.fact_ledger.to_list(),
         )
         latency_ms = (time.time() - analysis_start) * 1000.0
@@ -753,7 +773,7 @@ class RoleAgent:
         # Phase 7: Post-Generation Response Consistency Validation
         if active_memory_mode == "full":
             val_result = self.consistency_validator.validate_response(
-                response_text=response.content,
+                response_text=str(response.content),
                 world_registry=self.world_registry,
                 knowledge_state=self.knowledge_state,
                 memory_store=self.memory_store,
@@ -781,7 +801,7 @@ class RoleAgent:
                 try:
                     retry_resp = self.llm_with_tools.invoke(retry_messages)
                     second_val = self.consistency_validator.validate_response(
-                        response_text=retry_resp.content,
+                        response_text=str(retry_resp.content),
                         world_registry=self.world_registry,
                         knowledge_state=self.knowledge_state,
                         memory_store=self.memory_store,
@@ -799,15 +819,15 @@ class RoleAgent:
         # Record stakeholder utterance and track commitments/unresolved questions
         self.memory_store.record_stakeholder_turn(
             turn=new_turn,
-            stakeholder_message=response.content,
+            stakeholder_message=str(response.content),
             selected_action=decision.primary_action,
         )
 
         # Check if the LLM output the END token or interview is completed/terminated
-        is_finished = "[END_INTERVIEW]" in response.content or is_terminated_by_policy
+        is_finished = "[END_INTERVIEW]" in str(response.content) or is_terminated_by_policy
 
-        if "[END_INTERVIEW]" in response.content:
-            cleaned_content = response.content.replace("[END_INTERVIEW]", "").strip()
+        if "[END_INTERVIEW]" in str(response.content):
+            cleaned_content = str(response.content).replace("[END_INTERVIEW]", "").strip()
             response.content = cleaned_content
 
         if interview_state.status in [InterviewStatus.COMPLETED, InterviewStatus.TERMINATED]:
@@ -1000,7 +1020,7 @@ You MUST adhere to the following strict evaluation rules:
             }
 
             output = None
-            for event in self.graph.stream(inputs, config=config, stream_mode="values"):
+            for event in self.graph.stream(cast(Any, inputs), config=cast(Any, config), stream_mode="values"):
                 output = event
 
             if output and "messages" in output:
@@ -1039,7 +1059,7 @@ You MUST adhere to the following strict evaluation rules:
                 for msg in reversed(output["messages"]):
                     if isinstance(msg, AIMessage):
                         if not msg.tool_calls:
-                            return msg.content
+                            return str(msg.content)
 
             return "Sorry, I encountered an error generating a response."
         except Exception as e:
@@ -1060,35 +1080,299 @@ You MUST adhere to the following strict evaluation rules:
             await asyncio.sleep(0.01)
             i += chunk_size
 
+    def process_turn_state_for_streaming(self, candidate_message: str) -> str:
+        """
+        Processes candidate input through the complete simulator architecture pipeline during streaming:
+        1. Analyzer: Semantic candidate behavior & content analysis
+        2. Ledgers & Memory: Records candidate turn, extracted facts, and claims
+        3. Perception State Manager: Updates 8 perception metrics (trust, skepticism, etc.)
+        4. Interview State Machine: Records turn, updates criteria, evaluates stage transitions
+        5. Behavioral Policy Engine: Evaluates policy action
+        6. Persists state snapshot, stage transition event, and candidate analysis to storage
+        7. Returns the rich, calibrated spoken system prompt for streaming response generation.
+        """
+        new_turn = self.turn_count + 1
+        self.turn_count = new_turn
+
+        stage_str = self.interview_state.current_stage.value if isinstance(self.interview_state.current_stage, InterviewStage) else str(self.interview_state.current_stage)
+
+        # Resolve recent stakeholder question/message for context-aware candidate analysis
+        recent_context = self._opening_message
+        try:
+            interactions = storage.get_interactions(self.session_id)
+            for item in reversed(interactions):
+                if item.get("sender") == "ai" and item.get("message"):
+                    recent_context = item["message"]
+                    break
+        except Exception:
+            pass
+
+        # 1. Semantic Analysis
+        analysis_start = time.time()
+        try:
+            analysis = self.analyzer.analyze(
+                candidate_message=candidate_message,
+                current_stage=stage_str,
+                turn=new_turn,
+                recent_context=recent_context,
+                known_facts=self.fact_ledger.to_list(),
+            )
+        except Exception as e:
+            print(f"Warning: analyzer error in streaming: {e}")
+            analysis = self.analyzer._create_neutral_analysis(
+                turn=new_turn,
+                reason=f"Analyzer fallback: {e}",
+            )
+        latency_ms = (time.time() - analysis_start) * 1000.0
+
+        # 2. Update Ledgers and Memory Store
+        try:
+            for fact in getattr(analysis, "extracted_facts", []):
+                self.fact_ledger.add_or_update_fact(fact)
+            for claim in getattr(analysis, "extracted_claims", []):
+                self.claim_ledger.add_claim(claim)
+            self.memory_store.record_candidate_turn(
+                turn=new_turn,
+                candidate_message=candidate_message,
+                analysis=analysis,
+                fact_ledger=self.fact_ledger,
+                claim_ledger=self.claim_ledger,
+            )
+        except Exception as e:
+            pass
+
+        # 3. Dynamic Perception State Update
+        signals = map_analysis_to_signals(analysis)
+        updated_state, event = self.state_manager.apply_signals(
+            current_state=self.current_state,
+            signals=signals,
+            turn=new_turn,
+            persona=self.persona,
+        )
+        self.current_state = updated_state
+
+        # 4. Interview State Machine Update & Stage Transition Evaluation
+        self.interview_state_manager.record_turn(self.interview_state)
+        self.interview_state_manager.update_criteria_from_analysis(
+            state=self.interview_state,
+            analysis=analysis,
+        )
+        transition_event = self.interview_state_manager.evaluate_stage_transition(
+            state=self.interview_state,
+            client_state=updated_state,
+            persona_config=self.persona_configuration,
+        )
+
+        # 5. Policy Engine Evaluation & Phase 7 Knowledge Access Verification
+        decision = self.policy_engine.evaluate(
+            persona=self.persona,
+            client_state=updated_state,
+            interview_state=self.interview_state,
+            candidate_analysis=analysis,
+            turn=new_turn,
+            candidate_message=candidate_message,
+            policy_mode=self.policy_mode,
+            persona_config=self.persona_configuration,
+        )
+
+        if decision.primary_action.action_type == ActionType.REVEAL_INFORMATION:
+            target_topic = decision.primary_action.target or ""
+            access_dec = self.knowledge_state.evaluate_access(
+                topic=target_topic,
+                candidate_trust=updated_state.trust,
+                stage=self.interview_state.current_stage,
+            )
+            if not access_dec.allowed:
+                decision.primary_action.action_type = ActionType.WITHHOLD_INFORMATION
+                decision.primary_action.information_to_withhold = [target_topic]
+                decision.primary_action.information_to_reveal = []
+                decision.primary_action.reason = f"Knowledge access policy denied disclosure: {access_dec.reason}"
+                decision.primary_action.objective = "protect_confidential_information"
+
+        self.current_decision = decision
+
+        if decision.primary_action.action_type == ActionType.TERMINATE:
+            self.interview_state.status = InterviewStatus.TERMINATED
+            self.interview_state.termination_reason = decision.primary_action.reason
+
+        # Phase 7: Selective Memory Retrieval & Knowledge Context for Streaming
+        relevant_memories = None
+        if self.memory_mode in ("structured", "full"):
+            try:
+                relevant_memories = self.memory_retriever.retrieve_relevant_memories(
+                    stage=self.interview_state.current_stage,
+                    selected_action=decision.primary_action,
+                    memory_store=self.memory_store,
+                    candidate_analysis=analysis,
+                    max_results=5,
+                )
+            except Exception:
+                relevant_memories = None
+
+        unresolved_context = None
+        knowledge_constraints = None
+        if self.memory_mode == "full":
+            knowledge_constraints = (
+                "1. Do NOT disclose confidential topics (exact budget, internal margins, unannounced roadmap).\n"
+                "2. Maintain strict factual consistency with the company's verified technology stack and operational reality.\n"
+                "3. Do NOT invent new company facts not provided in the World Model."
+            )
+            unresolved_lines = []
+            open_questions = [q for q in self.memory_store.unresolved_questions if q.status == "UNRESOLVED"]
+            for q in open_questions[-2:]:
+                unresolved_lines.append(f"- [UNANSWERED QUESTION (Turn {q.source_turn})]: '{q.question}' remains unanswered by candidate.")
+            open_objections = [o for o in self.memory_store.unresolved_objections if o.status in (ItemStatus.OPEN, ItemStatus.PARTIALLY_ADDRESSED)]
+            for o in open_objections[-2:]:
+                unresolved_lines.append(f"- [ACTIVE OBJECTION ({o.topic})]: {o.description}")
+            active_commits = [c for c in self.memory_store.commitments if c.status == CommitmentStatus.PROMISED]
+            for c in active_commits[-2:]:
+                unresolved_lines.append(f"- [PENDING COMMITMENT (Turn {c.source_turn})]: {c.description}")
+            if unresolved_lines:
+                unresolved_context = "\n".join(unresolved_lines)
+
+        # 6. Persist to SQLite
+        try:
+            storage.save_state_snapshot(
+                session_id=self.session_id,
+                turn_number=new_turn,
+                state=updated_state,
+                event_type=event.event_type if event else "turn_update",
+                event_reason=event.reason if event else f"Turn {new_turn} perception update",
+            )
+        except Exception as e:
+            print(f"Warning: Failed to save streaming state snapshot: {e}")
+
+        if transition_event:
+            try:
+                storage.save_interview_stage_event(
+                    session_id=self.session_id,
+                    turn_number=new_turn,
+                    from_stage=transition_event.from_stage.value if isinstance(transition_event.from_stage, InterviewStage) else str(transition_event.from_stage),
+                    to_stage=transition_event.to_stage.value if isinstance(transition_event.to_stage, InterviewStage) else str(transition_event.to_stage),
+                    reason=transition_event.reason,
+                )
+            except Exception as e:
+                print(f"Warning: Failed to save streaming stage event: {e}")
+
+        try:
+            storage.save_candidate_analysis(
+                session_id=self.session_id,
+                turn_number=new_turn,
+                candidate_message=candidate_message,
+                current_stage=stage_str,
+                analysis=analysis,
+                extracted_facts=getattr(analysis, "extracted_facts", []),
+                extracted_claims=getattr(analysis, "extracted_claims", []),
+                interaction_signals=signals,
+                latency_ms=latency_ms,
+            )
+        except Exception as e:
+            print(f"Warning: Failed to save streaming candidate analysis: {e}")
+
+        try:
+            storage.save_behavior_decision(
+                session_id=self.session_id,
+                turn_number=new_turn,
+                decision=decision,
+            )
+        except Exception as e:
+            pass
+
+        for m_item in self.memory_store.memories[-2:]:
+            try:
+                storage.save_memory_item(self.session_id, m_item)
+            except Exception:
+                pass
+
+        # 7. Construct dynamic system prompt with spoken dialogue directive
+        system_template = get_interviewer_system_prompt(
+            persona_or_context=self.persona,
+            topic=self.topic,
+            scenario=self.scenario,
+            experience=self.experience,
+            style=self.style,
+            client_state=updated_state,
+            interview_state=self.interview_state,
+            behavioral_decision=decision,
+            relevant_memories=relevant_memories,
+            knowledge_constraints=knowledge_constraints,
+            unresolved_context=unresolved_context,
+        )
+
+        spoken_directive = (
+            "\n\nCRITICAL SPOKEN VOICE DIRECTIVE:\n"
+            "This response is spoken aloud via real-time Text-to-Speech audio.\n"
+            "- NEVER use markdown headers or titles (NO '#', '##', '###', '####').\n"
+            "- NEVER use asterisks or formatting symbols (NO '**', '*').\n"
+            "- NEVER use bullet points, list numbers, or dashes (NO '-', '•', '1.').\n"
+            "- NEVER introduce spoken paragraphs with category labels (e.g., do NOT say 'Data Accuracy:', 'Customer Retention:').\n"
+            "- Speak naturally and directly to the candidate as a senior executive in an interactive meeting.\n"
+            "- Keep your response concise and conversational (maximum 80 words)."
+        )
+
+        return system_template + spoken_directive
+
+    def record_ai_turn(self, ai_reply: str):
+        """Record the AI utterance in conversational memory and track commitments."""
+        try:
+            if hasattr(self, "memory_store") and hasattr(self, "current_decision") and self.current_decision:
+                self.memory_store.record_stakeholder_turn(
+                    turn=self.turn_count,
+                    stakeholder_message=ai_reply,
+                    selected_action=self.current_decision.primary_action,
+                )
+                for m_item in self.memory_store.memories[-1:]:
+                    try:
+                        storage.save_memory_item(self.session_id, m_item)
+                    except Exception:
+                        pass
+                for c_item in self.memory_store.commitments[-1:]:
+                    try:
+                        storage.save_commitment(self.session_id, c_item)
+                    except Exception:
+                        pass
+                for u_item in self.memory_store.unresolved_questions[-1:]:
+                    try:
+                        storage.save_unresolved_item(self.session_id, u_item, item_type="question")
+                    except Exception:
+                        pass
+                for o_item in self.memory_store.unresolved_objections[-1:]:
+                    try:
+                        storage.save_unresolved_item(self.session_id, o_item, item_type="objection")
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+
     def _get_fallback_opening(self) -> str:
         role = self.role_id.upper()
         if "CEO" in role:
             return (
-                "Thanks for taking the time to meet today. We have high expectations for this initiative, "
-                "and my focus is strictly on strategic impact and enterprise valuation. Let's get straight to it—"
-                f"give me the high-level picture of how your approach for '{self.topic}' moves the needle for our growth."
+                "Thanks for taking the time to meet today. We have high expectations for this initiative "
+                "and its strategic impact on enterprise valuation. To kick us off, please introduce yourself "
+                "and give me a high-level overview of your background."
             )
         elif "CTO" in role:
             return (
                 f"Thanks for jumping on. I've reviewed the outline for our {self.topic} session. "
                 "From an architectural standpoint, I care about scalability, reliability, and technical tradeoffs. "
-                "To kick us off, walk me through the high-level architecture and the core decisions behind it."
+                "To kick us off, please introduce yourself and walk me through your technical background."
             )
         elif "HR" in role:
             return (
-                "Hello, thanks for joining me today. I'm looking forward to learning more about your background "
-                f"and experience. To get started with our {self.topic} conversation, could you tell me briefly about "
-                "a recent project you led and how you handled key team and stakeholder dynamics?"
+                "Hello, thanks for joining me today. I'm looking forward to learning more about your journey. "
+                "To get started, could you briefly introduce yourself and tell me about your background?"
             )
         elif "SALES" in role:
             return (
-                "Good to connect today. We're evaluating solutions in this space, but our pipeline and ROI requirements "
-                "are aggressive. Let's dive right in—what is the core differentiator of your offering, and why should we prioritize this now?"
+                "Good to connect today. Our pipeline and ROI requirements are aggressive. "
+                "Before we dive into the details, please introduce yourself and give me a brief overview of your background."
             )
         else:
             return (
-                f"Thanks for joining today's session on {self.topic}. Let's jump right in—"
-                "could you provide an overview of your strategy and how you plan to tackle this scenario?"
+                f"Thanks for joining today's session on {self.topic}. To get us started, "
+                "could you briefly introduce yourself and share your high-level approach for this scenario?"
             )
 
     def generate_opening(self) -> str:
@@ -1117,13 +1401,13 @@ You MUST adhere to the following strict evaluation rules:
                 f"Scenario Context: {self.scenario}\n\n"
                 "Instructions for your opening turn:\n"
                 "1. Greet the candidate in-character with the appropriate tone for your role.\n"
-                "2. State the context/purpose of today's meeting based on the topic and scenario.\n"
-                "3. Take charge and ask your first strategic opening question or challenge to start the conversation.\n"
+                "2. State the meeting context briefly.\n"
+                "3. Ask the candidate to briefly introduce themselves and their high-level approach/role on this initiative to kick off the session.\n"
                 "CRITICAL CONSTRAINTS:\n"
                 "- Never dump internal metadata or recite traits (e.g., do NOT say 'Hello, I am the CEO. Visionary and results-oriented executive').\n"
                 "- Do NOT passively ask 'What would you like to start with?'. YOU take the lead.\n"
                 "- Do NOT reveal you are an AI model.\n"
-                "- Keep your opening punchy, authoritative, and concise (under 60 words)."
+                "- Keep your opening very concise, punchy, and natural (strictly under 35 words so audio plays instantly)."
             )
 
             messages = [
@@ -1132,7 +1416,7 @@ You MUST adhere to the following strict evaluation rules:
             ]
 
             response = self.llm.invoke(messages)
-            opening_text = response.content.strip()
+            opening_text = str(response.content).strip()
 
             if "[END_INTERVIEW]" in opening_text:
                 opening_text = opening_text.replace("[END_INTERVIEW]", "").strip()
@@ -1173,30 +1457,16 @@ You MUST adhere to the following strict evaluation rules:
         candidate_analyses = storage.get_candidate_analyses(self.session_id)
         cs = self.current_state
 
-        # 1. Calculate overall score (0 - 100) based on dynamic perception state
-        trust_pts = cs.trust * 30.0
-        skep_pts = (1.0 - cs.skepticism) * 20.0
-        pat_pts = cs.patience * 15.0
-        risk_pts = (1.0 - cs.perceived_risk) * 15.0
-        frust_pts = (1.0 - cs.frustration) * 20.0
-        raw_score = int(round(trust_pts + skep_pts + pat_pts + risk_pts + frust_pts))
-        overall_score = max(10, min(100, raw_score))
+        # 1. Unified Scorecard Evaluation (Single Source of Truth across Track 1, 2, and 3)
+        from app.evaluation.evaluator import get_sales_evaluator, get_letter_grade, get_outcome_verdict
+        from app.services.telemetry import get_telemetry
 
-        # 2. Letter grade
-        if overall_score >= 90:
-            letter_grade = "A+"
-        elif overall_score >= 82:
-            letter_grade = "A"
-        elif overall_score >= 74:
-            letter_grade = "B"
-        elif overall_score >= 65:
-            letter_grade = "C"
-        elif overall_score >= 50:
-            letter_grade = "D"
-        else:
-            letter_grade = "F"
+        telemetry = get_telemetry(self.session_id)
+        evaluator = get_sales_evaluator()
+        scorecard = evaluator.evaluate_post_call(session_id=self.session_id, telemetry=telemetry)
+        overall_score = scorecard.overall_readiness_score
 
-        # 3. Outcome verdict
+        # 2. Check early candidate exit or stakeholder walkout
         is_candidate_exit = getattr(self, "candidate_early_exit", False) or (
             self.interview_state.status == InterviewStatus.TERMINATED
             and "Candidate requested early exit" in (self.interview_state.termination_reason or "")
@@ -1216,35 +1486,26 @@ You MUST adhere to the following strict evaluation rules:
                 or (cs.frustration >= 0.85 and cs.patience <= 0.20)
             )
             if is_terminated:
+                overall_score = min(45, overall_score)
+                letter_grade = "F"
                 outcome_verdict = "Stakeholder Walkout / Premature Termination"
                 outcome_summary = (
                     f"The {self.role_id} terminated the conversation early. Critical friction arose around "
                     f"frustration ({cs.frustration:.2f}) and depleted patience ({cs.patience:.2f})."
                 )
-            elif overall_score >= 80:
-                outcome_verdict = "Follow-up Secured / Strong Executive Buy-in"
-                outcome_summary = (
-                    f"The {self.role_id} gained high confidence ({cs.confidence_in_candidate:.2f}) and trust ({cs.trust:.2f}). "
-                    f"Next steps for a technical demo or contract review were successfully unlocked."
-                )
-            elif overall_score >= 65:
-                outcome_verdict = "Conditional Follow-up / Pending Due Diligence"
-                outcome_summary = (
-                    f"The {self.role_id} remains moderately interested, but skepticism ({cs.skepticism:.2f}) or "
-                    f"perceived risk ({cs.perceived_risk:.2f}) requires concrete evidence before final commitment."
-                )
             else:
-                outcome_verdict = "Deal Declined / Opportunity Lost"
-                outcome_summary = (
-                    f"The {self.role_id} was unconvinced by value claims and perceived excessive organizational risk ({cs.perceived_risk:.2f})."
-                )
+                letter_grade = get_letter_grade(overall_score)
+                outcome_verdict, outcome_summary = get_outcome_verdict(overall_score, self.role_id)
 
-        # 4. Dimension Subscores
-        clarity_score = int(round(min(100, max(15, (cs.engagement * 50 + (1.0 - cs.frustration) * 50)))))
-        objection_score = int(round(min(100, max(15, (1.0 - cs.skepticism) * 60 + cs.patience * 40))))
-        value_score = int(round(min(100, max(15, cs.interest * 60 + cs.trust * 40))))
-        domain_score = int(round(min(100, max(15, cs.confidence_in_candidate * 70 + cs.trust * 30))))
-        composure_score = int(round(min(100, max(15, cs.patience * 50 + (1.0 - cs.frustration) * 50))))
+        # 3. Harmonize Dimension Subscores with Delivery & Strategic Telemetry
+        strategic = scorecard.strategic_scorecard
+        delivery = scorecard.delivery_scorecard
+
+        clarity_score = int(round(min(100, max(20, (strategic.discovery_score * 0.40 + delivery.talk_listen_ratio * 40.0 + (95 if delivery.latency_verdict == "Crisp" else 70) * 0.40)))))
+        objection_score = strategic.objection_handling_score
+        value_score = strategic.value_proposition_score
+        domain_score = strategic.discovery_score
+        composure_score = int(round(min(100, max(20, (100 - min(40, delivery.interruption_count * 15)) * 0.60 + (1.0 - cs.frustration) * 40.0))))
 
         subscores = [
             FeedbackSubscore(name="Communication Clarity", score=clarity_score, description="Directness, brevity, and structure of answers"),
@@ -1254,7 +1515,7 @@ You MUST adhere to the following strict evaluation rules:
             FeedbackSubscore(name="Composure Under Pressure", score=composure_score, description="Maintaining executive presence when challenged"),
         ]
 
-        # 5. Extract Strengths & Weaknesses with "What you should have said instead"
+        # 4. Extract Strengths & Weaknesses with "What you should have said instead"
         strengths = []
         weaknesses = []
 

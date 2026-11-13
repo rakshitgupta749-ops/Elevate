@@ -93,6 +93,17 @@ class StorageService:
                 )
             ''')
             cursor.execute('''
+                CREATE TABLE IF NOT EXISTS persona_configurations (
+                    session_id TEXT PRIMARY KEY,
+                    role TEXT,
+                    preset TEXT,
+                    traits_json TEXT,
+                    configuration_json TEXT,
+                    created_at TEXT,
+                    FOREIGN KEY(session_id) REFERENCES sessions(id)
+                )
+            ''')
+            cursor.execute('''
                 CREATE TABLE IF NOT EXISTS candidate_turn_analyses (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     session_id TEXT,
@@ -258,7 +269,178 @@ class StorageService:
                     FOREIGN KEY(session_id) REFERENCES sessions(id)
                 )
             ''')
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS role_admin_configurations (
+                    role TEXT PRIMARY KEY,
+                    preset TEXT,
+                    traits_json TEXT NOT NULL,
+                    experience TEXT,
+                    style TEXT,
+                    voice TEXT,
+                    conversation_overview TEXT,
+                    custom_scenario TEXT,
+                    scenario_title TEXT,
+                    challenge_tags_json TEXT,
+                    updated_at TEXT
+                )
+            ''')
+            # Check migration if conversation_overview column missing
+            try:
+                cursor.execute("ALTER TABLE role_admin_configurations ADD COLUMN conversation_overview TEXT")
+            except Exception:
+                pass
+
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS admin_persona_scenarios (
+                    id TEXT PRIMARY KEY,
+                    role TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    preset TEXT,
+                    traits_json TEXT NOT NULL,
+                    experience TEXT,
+                    style TEXT,
+                    voice TEXT,
+                    conversation_overview TEXT,
+                    custom_scenario TEXT,
+                    scenario_title TEXT,
+                    challenge_tags_json TEXT,
+                    created_at TEXT,
+                    updated_at TEXT
+                )
+            ''')
+
+            # Seed default multiple personas per role if admin_persona_scenarios is empty or has legacy candidate-perspective text
+            cursor.execute("SELECT COUNT(*) FROM admin_persona_scenarios WHERE custom_scenario LIKE 'You are meeting with%'")
+            legacy_count = cursor.fetchone()[0]
+            cursor.execute("SELECT COUNT(*) FROM admin_persona_scenarios")
+            total_count = cursor.fetchone()[0]
+            if total_count == 0 or legacy_count > 0:
+                self._seed_default_persona_scenarios(cursor)
+
+            # Update legacy role_admin_configurations if present
+            cursor.execute('''
+                UPDATE role_admin_configurations 
+                SET custom_scenario = 'You are the Chief Technology Officer (CTO). A candidate is presenting an aggressive cloud cost containment plan to you. Scrutinize the technical tradeoffs, risk to system stability and uptime SLAs, operational maintenance overhead, and architectural feasibility.'
+                WHERE role = 'CTO' AND custom_scenario LIKE 'You are presenting an aggressive cloud cost containment plan to the CTO.%'
+            ''')
+
             conn.commit()
+
+    def _seed_default_persona_scenarios(self, cursor):
+        """Seed initial high-quality diverse personas across all supported roles."""
+        now = datetime.now().isoformat()
+        seeds = [
+            # --- CTO Personas ---
+            (
+                "cto-kafka", "CTO", "CTO - High-Throughput & Scalability Architect", "STRICT",
+                json.dumps({"skepticism": 0.88, "strictness": 0.92, "kindness": 0.25, "directness": 0.85, "patience": 0.30, "domain_depth": 0.95}),
+                "Advanced", "Stress Interview", "am_michael",
+                "Pitching an event-driven Kafka and distributed caching architecture to replace a bottlenecked relational database processing 20,000 TPS under zero-downtime requirements.",
+                "You are the Chief Technology Officer (CTO) of a high-growth fintech enterprise processing 20,000 transactions per second. Your core relational database is suffering connection saturation and latency spikes during market open. The candidate is meeting with you to pitch a zero-downtime event-driven architecture using Kafka, distributed caching, and read-replica segregation. You must rigorously scrutinize technical risk, operational complexity, data consistency guarantees, disaster recovery failover, and maintenance overhead. Challenge vague claims and demand concrete architectural proofs.",
+                "High-Throughput Architecture Migration", json.dumps(["20k TPS Latency", "Eventual Consistency", "Disaster Recovery"]), now, now
+            ),
+            (
+                "cto-tech-debt", "CTO", "CTO - Monolith Decomposition & Velocity Lead", "BALANCED",
+                json.dumps({"skepticism": 0.65, "strictness": 0.70, "kindness": 0.55, "directness": 0.75, "patience": 0.60, "domain_depth": 0.85}),
+                "Intermediate", "Challenging", "am_onyx",
+                "Pitching a phased domain-driven decomposition of a 7-year-old monolithic codebase to eliminate 45-minute build cycles and deployment fragility.",
+                "You are the Chief Technology Officer (CTO) of an enterprise logistics platform. Your engineering organization is struggling with 45-minute CI/CD build cycles and deployment fragility across a 7-year-old monolithic codebase. The candidate is meeting with you to propose a phased domain-driven decomposition into microservices. You expect concrete plans for service boundary isolation, shared database dependency untangling, zero-downtime rollback strategies, and measurable developer velocity gains. Press them on deployment risks and operational complexity.",
+                "Monolith Decomposition & CI/CD Velocity", json.dumps(["Domain Boundaries", "Database Coupling", "Rollback SLAs"]), now, now
+            ),
+            (
+                "cto-security", "CTO", "CTO - Multi-Region Failover & Zero-Trust Governance", "RISK_AVERSE",
+                json.dumps({"skepticism": 0.92, "strictness": 0.95, "kindness": 0.30, "directness": 0.85, "patience": 0.40, "domain_depth": 0.92}),
+                "Advanced", "Stress Interview", "am_michael",
+                "Evaluating an active-active multi-region Kubernetes deployment under strict HIPAA and SOC2 Type II compliance with 99.995% SLA and zero-trust service mesh.",
+                "You are the Chief Technology Officer (CTO) of a healthcare technology company operating under strict HIPAA and SOC2 Type II compliance. Your platform mandates a 99.995% uptime SLA with active-active multi-region failover and zero-trust mutual TLS service mesh. The candidate is meeting with you to pitch a Kubernetes-based multi-cloud deployment. You must rigorously scrutinize replication lag, split-brain failure handling, ingress security, compliance auditability, and multi-region network egress costs. Challenge their resilience proofs.",
+                "Multi-Region Failover & Zero-Trust Governance", json.dumps(["Zero-Trust mTLS", "Replication Lag", "Split-Brain Risk"]), now, now
+            ),
+
+            # --- CEO Personas ---
+            (
+                "ceo-ai-platform", "CEO", "CEO - Enterprise AI & Valuation Driver", "STRATEGIC_ROI",
+                json.dumps({"skepticism": 0.75, "strictness": 0.80, "kindness": 0.40, "directness": 0.90, "patience": 0.30, "domain_depth": 0.60}),
+                "Expert", "Executive", "am_onyx",
+                "Presenting an enterprise AI workflow automation platform to streamline cross-department operations, protect gross margins, and accelerate enterprise valuation.",
+                "You are the Chief Executive Officer (CEO) of a 500-employee enterprise technology company. The candidate is meeting with you to pitch an AI workflow automation platform to streamline disconnected operations across departments. You care strictly about strategic business ROI, enterprise valuation multiple expansion, security governance, workforce adoption speed, and timeline to break-even. Probe the commercial payback timeline, total cost of ownership, and measurable productivity lift.",
+                "Enterprise AI Workflow Automation", json.dumps(["Valuation Impact", "Payback Timeline", "Employee Adoption"]), now, now
+            ),
+            (
+                "ceo-cloud-spend", "CEO", "CEO - Cost Turnaround & Margin Protection", "AGGRESSIVE_SKEPTIC",
+                json.dumps({"skepticism": 0.85, "strictness": 0.90, "kindness": 0.30, "directness": 0.95, "patience": 0.25, "domain_depth": 0.65}),
+                "Advanced", "Challenging", "af_bella",
+                "Addressing skyrocketing infrastructure spend that is eroding company margins before high-volume seasonal revenue spikes.",
+                "You are the Chief Executive Officer (CEO) of a rapidly growing e-commerce company experiencing unpredictable cloud infrastructure surges that are severely eroding gross margins before peak season. The candidate is meeting with you to propose an infrastructure right-sizing and automated cost governance strategy. You want to understand exact gross margin improvement, multi-year vendor contract lock-ins, operational downtime risks, and customer experience safeguards during peak revenue events.",
+                "Gross Margin Defense & Cloud Cost Control", json.dumps(["Margin Expansion", "Contract Lock-in", "Peak Availability"]), now, now
+            ),
+            (
+                "ceo-security-risk", "CEO", "CEO - Institutional Audit & Brand Defense", "BALANCED",
+                json.dumps({"skepticism": 0.70, "strictness": 0.85, "kindness": 0.50, "directness": 0.80, "patience": 0.50, "domain_depth": 0.55}),
+                "Intermediate", "Professional", "bf_emma",
+                "Upgrading corporate cybersecurity and zero-trust posture ahead of an institutional funding round or global enterprise audit.",
+                "You are the Chief Executive Officer (CEO) of a 300-employee financial services firm preparing for international market expansion and institutional regulatory audits. The candidate is presenting an enterprise zero-trust security defense suite. You must ensure corporate brand reputation protection, strict regulatory compliance, executive liability mitigation, and smooth employee productivity without adding crippling organizational bureaucracy.",
+                "Institutional Audit & Brand Defense", json.dumps(["Regulatory Fines", "Executive Liability", "Operational Friction"]), now, now
+            ),
+
+            # --- HR Personas ---
+            (
+                "hr-culture-friction", "HR", "HR - Cross-Functional Leadership Alignment", "EMPATHETIC",
+                json.dumps({"skepticism": 0.40, "strictness": 0.50, "kindness": 0.85, "directness": 0.60, "patience": 0.80, "domain_depth": 0.70}),
+                "Intermediate", "Professional", "bf_emma",
+                "Resolving strategic friction between aggressive product delivery deadlines and engineering burnout to retain key senior talent.",
+                "You are the VP of People & Culture (HR Director) at a high-growth scale-up experiencing severe velocity friction and burnout between aggressive product leads and engineering delivery teams. The candidate is meeting with you to discuss organizational restructuring, retention safeguards for critical senior talent, and improved communication governance. Probe their emotional intelligence, empathy, and practical management frameworks.",
+                "Cross-Functional Leadership Alignment", json.dumps(["Burnout Mitigation", "Senior Retention", "Executive Friction"]), now, now
+            ),
+            (
+                "hr-talent-scaling", "HR", "HR - Leveling Framework & Retention Strategist", "BALANCED",
+                json.dumps({"skepticism": 0.60, "strictness": 0.75, "kindness": 0.65, "directness": 0.70, "patience": 0.65, "domain_depth": 0.80}),
+                "Advanced", "Challenging", "af_bella",
+                "Calibrating leveling frameworks and competitive retention equity packages during rapid headcount expansion.",
+                "You are the Head of Talent & Total Rewards (HR) at a technology company doubling in headcount this year. The candidate is meeting with you to address market compensation compression, career leveling consistency, and retention packages for high-performing key contributors. You need to ensure internal pay equity, prevent team morale fractures, and protect the organization from key person risk.",
+                "Leveling Framework & High-Growth Retention", json.dumps(["Comp Compression", "Leveling Consistency", "Key Contributor Equity"]), now, now
+            ),
+            (
+                "hr-performance-reset", "HR", "HR - Performance Reset & Accountability Lead", "STRICT",
+                json.dumps({"skepticism": 0.75, "strictness": 0.85, "kindness": 0.45, "directness": 0.85, "patience": 0.45, "domain_depth": 0.75}),
+                "Expert", "Stress Interview", "bf_emma",
+                "Navigating team restructuring, constructive performance resets, and accountability standards across underperforming departments.",
+                "You are the Chief People Officer (HR Executive) navigating sensitive team restructuring and underperforming division turnarounds. The candidate is meeting with you to establish performance accountability frameworks and department resets. You must ensure team morale is safeguarded, performance evaluations remain objective and defensible, legal severance policies are respected, and core cultural pillars are preserved.",
+                "Performance Reset & Culture Accountability", json.dumps(["Performance PIPs", "Leadership Standards", "Culture Defense"]), now, now
+            ),
+
+            # --- SALES_MANAGER Personas ---
+            (
+                "sales-competitive-displacement", "SALES_MANAGER", "Sales Dir - Competitive Displacement Strategist", "AGGRESSIVE_SKEPTIC",
+                json.dumps({"skepticism": 0.85, "strictness": 0.90, "kindness": 0.30, "directness": 0.95, "patience": 0.25, "domain_depth": 0.80}),
+                "Advanced", "Stress Interview", "am_onyx",
+                "Pitching against an entrenched incumbent vendor to the VP of Sales, who aggressively probes switching costs, migration risks, and gross margin defense.",
+                "You are the VP of Commercial Enterprise Sales. Your company has been using an established competitor for 6 years and your team is accustomed to it. The candidate is meeting with you to pitch their product as a replacement. You must relentlessly probe and push back on switching friction, staff retraining downtime, contract termination costs, integration headaches, and aggressive pricing discount demands.",
+                "Competitive Displacement & Incumbent Takeout", json.dumps(["Incumbent Displacement", "Margin Defense", "Switching Costs"]), now, now
+            ),
+            (
+                "sales-procurement-negotiation", "SALES_MANAGER", "Sales Dir - Enterprise Procurement & Margin Defense", "STRATEGIC_ROI",
+                json.dumps({"skepticism": 0.80, "strictness": 0.85, "kindness": 0.40, "directness": 0.90, "patience": 0.40, "domain_depth": 0.85}),
+                "Expert", "Executive", "af_bella",
+                "Defending 6-figure enterprise contract pricing against procurement discount requests while securing multi-year commitments.",
+                "You are the Commercial Sales Director & Procurement Committee Lead negotiating an enterprise contract before end-of-quarter sign-off. The candidate is presenting their commercial contract. You are pushing for a 35% across-the-board price discount, extended payment terms, and punitive custom SLA guarantees. Test how well the candidate defends their pricing, articulates business ROI, and trades concessions.",
+                "Enterprise Procurement & Margin Defense", json.dumps(["Procurement Pushback", "Multi-Year Commitments", "Discount Caps"]), now, now
+            ),
+            (
+                "sales-stakeholder-consensus", "SALES_MANAGER", "Sales Dir - Multi-Stakeholder Consensus Closer", "BALANCED",
+                json.dumps({"skepticism": 0.70, "strictness": 0.75, "kindness": 0.55, "directness": 0.80, "patience": 0.55, "domain_depth": 0.75}),
+                "Intermediate", "Challenging", "am_michael",
+                "Aligning conflicting executive priorities across the CFO (budget), CTO (security/tech stack), and Head of Operations (implementation timeline) to close a 6-figure enterprise deal.",
+                "You are the Executive Sales Director evaluating whether the candidate can successfully lead and close a complex 6-figure enterprise transaction. You are assessing how the candidate manages competing stakeholder demands across the CFO (budget cuts), CTO (infosec & integration), and Head of Operations (implementation disruption). Probe their ability to navigate conflicting internal agendas and drive executive consensus.",
+                "Multi-Stakeholder Consensus Closing", json.dumps(["Conflicting Priorities", "Timeline Guarantees", "Executive Sign-off"]), now, now
+            ),
+        ]
+
+        cursor.executemany('''
+            INSERT OR REPLACE INTO admin_persona_scenarios (
+                id, role, title, preset, traits_json, experience, style, voice,
+                conversation_overview, custom_scenario, scenario_title, challenge_tags_json, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', seeds)
 
     def save_session(self, session_id: str, topic: str, role: str, scenario: str, experience: str, style: str):
         with self._get_connection() as conn:
@@ -296,7 +478,8 @@ class StorageService:
             cursor.execute('''
                 SELECT s.id, s.topic, s.role, s.scenario, s.experience, s.style, s.created_at,
                        COUNT(i.id) as interaction_count,
-                       e.report
+                       e.report,
+                       sc.scorecard_json
                 FROM sessions s
                 LEFT JOIN interactions i ON s.id = i.session_id
                 LEFT JOIN (
@@ -304,6 +487,11 @@ class StorageService:
                     FROM evaluations
                     WHERE id IN (SELECT MAX(id) FROM evaluations GROUP BY session_id)
                 ) e ON s.id = e.session_id
+                LEFT JOIN (
+                    SELECT session_id, scorecard_json
+                    FROM scorecards
+                    WHERE id IN (SELECT MAX(id) FROM scorecards GROUP BY session_id)
+                ) sc ON s.id = sc.session_id
                 GROUP BY s.id
                 ORDER BY s.created_at DESC
                 LIMIT ?
@@ -313,6 +501,8 @@ class StorageService:
                 overall_score = None
                 verdict = None
                 has_eval = False
+
+                # 1. Primary check: evaluations table
                 if r[8]:
                     has_eval = True
                     try:
@@ -322,6 +512,28 @@ class StorageService:
                             verdict = eval_data.get("outcome_verdict")
                     except Exception:
                         pass
+
+                # 2. Check scorecards table to ensure consistency if evaluations is missing or desynchronized
+                if r[9]:
+                    try:
+                        sc_data = json.loads(r[9])
+                        if isinstance(sc_data, dict):
+                            sc_score = sc_data.get("overall_readiness_score")
+                            if sc_score is not None:
+                                has_eval = True
+                                if overall_score is None:
+                                    overall_score = sc_score
+                                    if sc_score >= 80:
+                                        verdict = "Follow-up Secured / Strong Executive Buy-in"
+                                    elif sc_score >= 65:
+                                        verdict = "Positive Alignment / Pending Due Diligence"
+                                    elif sc_score >= 50:
+                                        verdict = "Conditional Interest / Substantial Proof Needed"
+                                    else:
+                                        verdict = "Deal Declined / Opportunity Lost"
+                    except Exception:
+                        pass
+
                 results.append({
                     "id": r[0],
                     "topic": r[1],
@@ -465,7 +677,7 @@ class StorageService:
 
         return None
 
-    def save_state_snapshot(self, session_id: str, turn_number: int, state: any, event_type: str, event_reason: str):
+    def save_state_snapshot(self, session_id: str, turn_number: int, state: Any, event_type: str, event_reason: str):
         import json
         state_dict = state.to_dict() if hasattr(state, "to_dict") else dict(state)
         state_json = json.dumps(state_dict)
@@ -544,7 +756,7 @@ class StorageService:
         turn_number: int,
         candidate_message: str,
         current_stage: str,
-        analysis: any,
+        analysis: Any,
         extracted_facts: list,
         extracted_claims: list,
         interaction_signals: list,
@@ -1054,7 +1266,7 @@ class StorageService:
                 data.get("created_at", datetime.now().isoformat()),
             ))
             conn.commit()
-            return cursor.lastrowid
+            return int(cursor.lastrowid or 0)
 
     def get_simulator_evaluation(self, session_id: str) -> Optional[Dict[str, Any]]:
         """Retrieve latest simulator evaluation for a session."""
@@ -1120,7 +1332,7 @@ class StorageService:
                 data.get("created_at", datetime.now().isoformat()),
             ))
             conn.commit()
-            return cursor.lastrowid
+            return int(cursor.lastrowid or 0)
 
     def get_human_evaluations(self, session_id: str) -> List[Dict[str, Any]]:
         """Retrieve all human expert evaluations for a session."""
@@ -1159,13 +1371,29 @@ class StorageService:
     def save_persona_configuration(
         self,
         session_id: str,
-        role: str,
-        preset: Optional[str],
-        traits: Dict[str, float],
+        role: Any = "",
+        preset: Optional[str] = "BALANCED",
+        traits: Optional[Dict[str, float]] = None,
         scenario_overrides: Optional[Dict[str, float]] = None,
         schema_version: str = "1.0",
     ) -> int:
         """Persist resolved concrete persona configuration for a simulation session."""
+        if not isinstance(role, str):
+            cfg_obj = role
+            if hasattr(cfg_obj, "model_dump"):
+                cfg_dict = cfg_obj.model_dump()
+            elif hasattr(cfg_obj, "to_dict"):
+                cfg_dict = cfg_obj.to_dict()
+            elif isinstance(cfg_obj, dict):
+                cfg_dict = cfg_obj
+            else:
+                cfg_dict = {}
+            role = str(cfg_dict.get("role", ""))
+            preset = cfg_dict.get("preset", "BALANCED")
+            traits = cfg_dict.get("traits", {})
+            scenario_overrides = cfg_dict.get("scenario_overrides", {})
+            schema_version = str(cfg_dict.get("persona_schema_version", "1.0"))
+
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('''
@@ -1178,13 +1406,13 @@ class StorageService:
                 session_id,
                 role,
                 preset or "BALANCED",
-                json.dumps(traits),
+                json.dumps(traits or {}),
                 json.dumps(scenario_overrides or {}),
                 schema_version,
                 datetime.now().isoformat(),
             ))
             conn.commit()
-            return cursor.lastrowid
+            return int(cursor.lastrowid or 0)
 
     def get_persona_configuration(self, session_id: str) -> Optional[Dict[str, Any]]:
         """Retrieve persisted persona configuration for a session."""
@@ -1208,6 +1436,281 @@ class StorageService:
                 "persona_schema_version": row[5],
                 "created_at": row[6],
             }
+
+    def save_admin_role_configuration(
+        self,
+        role: str,
+        preset: str = "BALANCED",
+        traits: Optional[Dict[str, float]] = None,
+        experience: str = "Intermediate",
+        style: str = "Professional",
+        voice: str = "am_onyx",
+        conversation_overview: str = "",
+        custom_scenario: str = "",
+        scenario_title: str = "",
+        challenge_tags: Optional[List[str]] = None,
+    ) -> bool:
+        """Persist admin configuration for a stakeholder role."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                INSERT OR REPLACE INTO role_admin_configurations (
+                    role, preset, traits_json, experience, style, voice,
+                    conversation_overview, custom_scenario, scenario_title, challenge_tags_json, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                role.upper(),
+                preset,
+                json.dumps(traits or {}),
+                experience,
+                style,
+                voice,
+                conversation_overview,
+                custom_scenario,
+                scenario_title,
+                json.dumps(challenge_tags or []),
+                datetime.now().isoformat(),
+            ))
+            conn.commit()
+            return True
+
+    def get_admin_role_configuration(self, role: str) -> Optional[Dict[str, Any]]:
+        """Retrieve admin configuration for a specific role."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT role, preset, traits_json, experience, style, voice,
+                       conversation_overview, custom_scenario, scenario_title, challenge_tags_json, updated_at
+                FROM role_admin_configurations
+                WHERE role = ?
+            ''', (role.upper(),))
+            row = cursor.fetchone()
+            if not row:
+                return None
+            return {
+                "role": row[0],
+                "preset": row[1],
+                "traits": json.loads(row[2]) if row[2] else {},
+                "experience": row[3],
+                "style": row[4],
+                "voice": row[5],
+                "conversation_overview": row[6] or "",
+                "custom_scenario": row[7] or "",
+                "scenario_title": row[8] or "",
+                "challenge_tags": json.loads(row[9]) if row[9] else [],
+                "updated_at": row[10],
+            }
+
+    def get_all_admin_role_configurations(self) -> Dict[str, Dict[str, Any]]:
+        """Retrieve all admin role configurations indexed by role."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT role, preset, traits_json, experience, style, voice,
+                       conversation_overview, custom_scenario, scenario_title, challenge_tags_json, updated_at
+                FROM role_admin_configurations
+            ''')
+            rows = cursor.fetchall()
+            result = {}
+            for row in rows:
+                result[row[0]] = {
+                    "role": row[0],
+                    "preset": row[1],
+                    "traits": json.loads(row[2]) if row[2] else {},
+                    "experience": row[3],
+                    "style": row[4],
+                    "voice": row[5],
+                    "conversation_overview": row[6] or "",
+                    "custom_scenario": row[7] or "",
+                    "scenario_title": row[8] or "",
+                    "challenge_tags": json.loads(row[9]) if row[9] else [],
+                    "updated_at": row[10],
+                }
+            return result
+
+    def delete_admin_role_configuration(self, role: str) -> bool:
+        """Delete/remove a published admin role configuration from SQLite."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                DELETE FROM role_admin_configurations WHERE role = ?
+            ''', (role.upper(),))
+            conn.commit()
+            return cursor.rowcount > 0
+
+    def save_admin_persona_scenario(
+        self,
+        scenario_id: str,
+        role: str,
+        title: str,
+        preset: str = "BALANCED",
+        traits: Dict[str, float] = None,
+        experience: str = "Intermediate",
+        style: str = "Professional",
+        voice: str = "am_onyx",
+        conversation_overview: str = "",
+        custom_scenario: str = "",
+        scenario_title: str = "",
+        challenge_tags: List[str] = None,
+    ) -> Dict[str, Any]:
+        """Save or update an admin persona scenario in SQLite."""
+        now = datetime.now().isoformat()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            # Check if exists to preserve created_at
+            cursor.execute("SELECT created_at FROM admin_persona_scenarios WHERE id = ?", (scenario_id,))
+            row = cursor.fetchone()
+            created_at = row[0] if row else now
+
+            cursor.execute('''
+                INSERT OR REPLACE INTO admin_persona_scenarios (
+                    id, role, title, preset, traits_json, experience, style, voice,
+                    conversation_overview, custom_scenario, scenario_title, challenge_tags_json, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                scenario_id,
+                role.upper(),
+                title or f"{role.upper()} Persona",
+                preset,
+                json.dumps(traits or {}),
+                experience,
+                style,
+                voice,
+                conversation_overview,
+                custom_scenario,
+                scenario_title or title,
+                json.dumps(challenge_tags or []),
+                created_at,
+                now,
+            ))
+            # Also update role_admin_configurations for backward compatibility
+            cursor.execute('''
+                INSERT OR REPLACE INTO role_admin_configurations (
+                    role, preset, traits_json, experience, style, voice,
+                    conversation_overview, custom_scenario, scenario_title, challenge_tags_json, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                role.upper(),
+                preset,
+                json.dumps(traits or {}),
+                experience,
+                style,
+                voice,
+                conversation_overview,
+                custom_scenario,
+                scenario_title or title,
+                json.dumps(challenge_tags or []),
+                now,
+            ))
+            conn.commit()
+
+        return self.get_admin_persona_scenario(scenario_id)
+
+    def get_admin_persona_scenario(self, scenario_id: str) -> Optional[Dict[str, Any]]:
+        """Retrieve a specific persona scenario by ID."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT id, role, title, preset, traits_json, experience, style, voice,
+                       conversation_overview, custom_scenario, scenario_title, challenge_tags_json, created_at, updated_at
+                FROM admin_persona_scenarios
+                WHERE id = ?
+            ''', (scenario_id,))
+            row = cursor.fetchone()
+            if not row:
+                return None
+            return {
+                "id": row[0],
+                "role": row[1],
+                "title": row[2],
+                "preset": row[3],
+                "traits": json.loads(row[4]) if row[4] else {},
+                "experience": row[5],
+                "style": row[6],
+                "voice": row[7],
+                "conversation_overview": row[8] or "",
+                "custom_scenario": row[9] or "",
+                "scenario_title": row[10] or "",
+                "challenge_tags": json.loads(row[11]) if row[11] else [],
+                "created_at": row[12],
+                "updated_at": row[13],
+            }
+
+    def get_admin_scenarios_by_role(self, role: str) -> List[Dict[str, Any]]:
+        """Retrieve all admin persona scenarios for a given role."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT id, role, title, preset, traits_json, experience, style, voice,
+                       conversation_overview, custom_scenario, scenario_title, challenge_tags_json, created_at, updated_at
+                FROM admin_persona_scenarios
+                WHERE role = ?
+                ORDER BY updated_at DESC
+            ''', (role.upper(),))
+            rows = cursor.fetchall()
+            result = []
+            for row in rows:
+                result.append({
+                    "id": row[0],
+                    "role": row[1],
+                    "title": row[2],
+                    "preset": row[3],
+                    "traits": json.loads(row[4]) if row[4] else {},
+                    "experience": row[5],
+                    "style": row[6],
+                    "voice": row[7],
+                    "conversation_overview": row[8] or "",
+                    "custom_scenario": row[9] or "",
+                    "scenario_title": row[10] or "",
+                    "challenge_tags": json.loads(row[11]) if row[11] else [],
+                    "created_at": row[12],
+                    "updated_at": row[13],
+                })
+            return result
+
+    def get_all_admin_persona_scenarios(self) -> List[Dict[str, Any]]:
+        """Retrieve all admin persona scenarios across all roles."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT id, role, title, preset, traits_json, experience, style, voice,
+                       conversation_overview, custom_scenario, scenario_title, challenge_tags_json, created_at, updated_at
+                FROM admin_persona_scenarios
+                ORDER BY role ASC, updated_at DESC
+            ''')
+            rows = cursor.fetchall()
+            result = []
+            for row in rows:
+                result.append({
+                    "id": row[0],
+                    "role": row[1],
+                    "title": row[2],
+                    "preset": row[3],
+                    "traits": json.loads(row[4]) if row[4] else {},
+                    "experience": row[5],
+                    "style": row[6],
+                    "voice": row[7],
+                    "conversation_overview": row[8] or "",
+                    "custom_scenario": row[9] or "",
+                    "scenario_title": row[10] or "",
+                    "challenge_tags": json.loads(row[11]) if row[11] else [],
+                    "created_at": row[12],
+                    "updated_at": row[13],
+                })
+            return result
+
+    def delete_admin_persona_scenario(self, scenario_id: str) -> bool:
+        """Delete an admin persona scenario by ID."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                DELETE FROM admin_persona_scenarios WHERE id = ?
+            ''', (scenario_id,))
+            conn.commit()
+            return cursor.rowcount > 0
 
     # Aliases for unified API & test access
     get_memory_items = get_memory_history

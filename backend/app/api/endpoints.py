@@ -1,15 +1,19 @@
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 from typing import List, Optional, Any, Dict
+import io
 import uuid
 import json
 import base64
 import asyncio
 import numpy as np
 import openai
-import kokoro
 from app.services.interview_pipeline import (
     get_interview_pipeline,
     calculate_audio_duration_sec,
+    detect_audio_filename,
+    tts_pipeline,
+    VALID_VOICE_IDS,
+    DEFAULT_VOICE_ID,
 )
 from app.models.schemas import (
     RoleModel,
@@ -20,7 +24,11 @@ from app.models.schemas import (
     ChatResponse,
     EvaluationRunRequest,
     HumanRatingRequest,
+    VoiceSpeakRequest,
+    VoiceTranscribeRequest,
+    AdminRoleConfigurationRequest,
 )
+from app.models.configuration import PersonaConfiguration
 from app.models.coaching import (
     StructuredCoachingReport,
     CoachingHintResponse,
@@ -30,7 +38,7 @@ from app.models.coaching import (
 )
 from app.agents.role_agent import RoleAgent
 from app.utils.logger import logger
-from app.utils.guardrails import is_safe_input, is_candidate_exit_intent
+from app.utils.guardrails import is_safe_input, validate_input, is_candidate_exit_intent
 from app.services.storage_service import storage
 from app.roles.traits import get_role_configuration_schema
 import time
@@ -78,35 +86,111 @@ def get_roles():
     return ROLES
 
 @router.post("/session", response_model=SessionResponse)
-def create_session(request: SessionRequest):
+async def create_session(request: SessionRequest):
     session_id = str(uuid.uuid4())
     
     try:
+        # Check if learner selected a specific admin persona scenario, or canonical role configuration
+        admin_cfg = None
+        if getattr(request, "admin_configuration_id", None):
+            admin_cfg = storage.get_admin_persona_scenario(request.admin_configuration_id)
+        if not admin_cfg:
+            admin_cfg = storage.get_admin_role_configuration(request.role)
+
+        effective_persona_cfg = getattr(request, "persona_configuration", None)
+        effective_voice = getattr(request, "voice", None) or getattr(request, "voice_id", None)
+        effective_experience = request.experience or "expert"
+        effective_style = request.style or "direct"
+        effective_scenario = request.scenario or "Standard Interview"
+        effective_topic = (request.topic or "").strip()
+
+        if admin_cfg:
+            if not effective_persona_cfg and admin_cfg.get("traits"):
+                effective_persona_cfg = PersonaConfiguration(
+                    role=admin_cfg.get("role", request.role),
+                    preset=admin_cfg.get("preset") or "BALANCED",
+                    traits=admin_cfg.get("traits", {}),
+                    persona_schema_version="1.0"
+                )
+            if (not effective_voice or effective_voice == DEFAULT_VOICE_ID) and admin_cfg.get("voice"):
+                effective_voice = admin_cfg.get("voice")
+            if admin_cfg.get("experience"):
+                effective_experience = admin_cfg.get("experience")
+            if admin_cfg.get("style"):
+                effective_style = admin_cfg.get("style")
+            if admin_cfg.get("custom_scenario"):
+                effective_scenario = admin_cfg.get("custom_scenario")
+            if not effective_topic:
+                effective_topic = (admin_cfg.get("scenario_title") or admin_cfg.get("title") or "").strip()
+
+        if not effective_topic:
+            effective_topic = f"{request.role} Executive Session"
+
+        session_voice = effective_voice if effective_voice in VALID_VOICE_IDS else DEFAULT_VOICE_ID
+
         storage.save_session(
             session_id=session_id,
-            topic=request.topic,
+            topic=effective_topic,
             role=request.role,
-            scenario=request.scenario,
-            experience=request.experience,
-            style=request.style
+            scenario=effective_scenario,
+            experience=effective_experience,
+            style=effective_style
         )
         
         agent = RoleAgent(
             role_id=request.role,
-            topic=request.topic,
-            scenario=request.scenario,
-            experience=request.experience,
-            style=request.style,
+            topic=effective_topic,
+            scenario=effective_scenario,
+            experience=effective_experience,
+            style=effective_style,
             session_id=session_id,
             policy_mode=getattr(request, "policy_mode", "rule_based") or "rule_based",
             memory_mode=getattr(request, "memory_mode", "full") or "full",
             architecture_mode=getattr(request, "architecture_mode", "FULL_SIMULATOR") or "FULL_SIMULATOR",
-            persona_configuration=getattr(request, "persona_configuration", None),
+            persona_configuration=effective_persona_cfg,
+            voice_profile=session_voice,
         )
         
         sessions[session_id] = agent
+
+        # Explicitly persist persona configuration to SQLite so inspector tabs always load traits
+        if hasattr(agent, "persona_configuration") and agent.persona_configuration:
+            try:
+                cfg = agent.persona_configuration
+                traits_dict = cfg.traits if isinstance(cfg.traits, dict) else (cfg.traits.model_dump() if hasattr(cfg.traits, "model_dump") else dict(cfg.traits))
+                storage.save_persona_configuration(
+                    session_id=session_id,
+                    role=getattr(cfg, "role", request.role),
+                    preset=getattr(cfg, "preset", "BALANCED"),
+                    traits=traits_dict,
+                    scenario_overrides=getattr(cfg, "scenario_overrides", {}),
+                    schema_version=getattr(cfg, "persona_schema_version", "1.0"),
+                )
+            except Exception as save_cfg_err:
+                logger.warning(f"Failed to persist persona configuration in create_session: {save_cfg_err}")
+
         initial_message = agent.generate_opening()
-        return SessionResponse(session_id=session_id, initial_message=initial_message)
+
+        initial_audio_b64 = None
+        try:
+            # Fast bounded pre-synthesis (up to 3.0s).
+            # With concise opening greetings (<35 words asking for candidate intro),
+            # synthesis completes in ~300-500ms, returning initial_audio immediately for 0ms room startup!
+            wav_bytes = await asyncio.wait_for(
+                tts_pipeline(initial_message, voice=session_voice),
+                timeout=3.0
+            )
+            if wav_bytes:
+                initial_audio_b64 = base64.b64encode(wav_bytes).decode("ascii")
+        except (asyncio.TimeoutError, Exception) as tts_err:
+            logger.info(f"Opening audio will stream asynchronously inside the conversation room ({tts_err})")
+
+        return SessionResponse(
+            session_id=session_id,
+            initial_message=initial_message,
+            initial_audio=initial_audio_b64,
+            voice=session_voice,
+        )
     except Exception as e:
         import traceback
         logger.error(f"Failed to create session: {traceback.format_exc()}")
@@ -118,9 +202,10 @@ def chat(request: ChatRequest):
         logger.warning(f"Session not found: {request.session_id}")
         raise HTTPException(status_code=404, detail="Session not found")
         
-    if not is_safe_input(request.message):
-        logger.warning(f"Unsafe input detected in session {request.session_id}")
-        raise HTTPException(status_code=400, detail="Input violates safety guidelines")
+    is_safe, safety_err = validate_input(request.message)
+    if not is_safe:
+        logger.warning(f"Unsafe input detected in session {request.session_id}: {safety_err}")
+        raise HTTPException(status_code=400, detail=safety_err or "Input violates safety guidelines")
 
     agent = sessions[request.session_id]
     
@@ -144,30 +229,46 @@ def chat(request: ChatRequest):
 from fastapi.responses import StreamingResponse
 import asyncio
 import json
+from pydantic import BaseModel
 
-@router.get("/chat/stream")
-async def stream_chat(session_id: str, message: str):
-    if session_id not in sessions:
+class ChatStreamPayload(BaseModel):
+    session_id: str
+    message: str
+
+@router.api_route("/chat/stream", methods=["GET", "POST"])
+async def stream_chat(
+    session_id: Optional[str] = None,
+    message: Optional[str] = None,
+    payload: Optional[ChatStreamPayload] = None,
+):
+    effective_session_id = (payload.session_id if payload else None) or session_id
+    effective_message = (payload.message if payload else None) or message
+
+    if not effective_session_id or not effective_message:
+        raise HTTPException(status_code=400, detail="session_id and message are required")
+
+    if effective_session_id not in sessions:
         raise HTTPException(status_code=404, detail="Session not found")
-        
-    if not is_safe_input(message):
-        raise HTTPException(status_code=400, detail="Input violates safety guidelines")
 
-    agent = sessions[session_id]
-    
-    storage.save_interaction(session_id, "user", message)
+    is_safe, safety_err = validate_input(effective_message)
+    if not is_safe:
+        raise HTTPException(status_code=400, detail=safety_err or "Input violates safety guidelines")
+
+    agent = sessions[effective_session_id]
+
+    storage.save_interaction(effective_session_id, "user", effective_message)
 
     async def event_generator():
         try:
             full_reply = ""
-            async for chunk in agent.stream_chat(message):
+            async for chunk in agent.stream_chat(effective_message):
                 full_reply += chunk
                 yield f"data: {json.dumps({'chunk': chunk})}\n\n"
-            
-            storage.save_interaction(session_id, "ai", full_reply)
+
+            storage.save_interaction(effective_session_id, "ai", full_reply)
             if "### 📊 Interview Complete" in full_reply:
-                storage.save_evaluation(session_id, full_reply)
-                
+                storage.save_evaluation(effective_session_id, full_reply)
+
             yield "data: [DONE]\n\n"
         except Exception as e:
             logger.error(f"Error during streaming chat: {e}")
@@ -197,14 +298,153 @@ async def stream_opening(session_id: str):
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
+@router.get("/voice/preview")
+async def get_voice_preview(
+    voice_id: Optional[str] = None, 
+    voice: Optional[str] = None,
+    text: Optional[str] = None,
+):
+    """
+    Live audio synthesis and preview endpoint for Kokoro-82M TTS executive voices.
+    Returns 24kHz WAV audio for the specified text or default preview.
+    Falls back to 'am_onyx' if the requested voice is invalid.
+    """
+    raw_voice = voice_id or voice or DEFAULT_VOICE_ID
+    safe_voice = raw_voice if raw_voice in VALID_VOICE_IDS else DEFAULT_VOICE_ID
+
+    preview_text = text.strip() if (text and text.strip()) else "Hello, I am ready to begin the interview."
+    try:
+        wav_bytes = await tts_pipeline(preview_text, voice=safe_voice)
+        return StreamingResponse(
+            io.BytesIO(wav_bytes),
+            media_type="audio/wav",
+            headers={
+                "Content-Disposition": f'inline; filename="speak_{safe_voice}.wav"',
+                "Cache-Control": "no-cache",
+            },
+        )
+    except Exception as exc:
+        logger.error(f"[Voice Preview Error] Failed for voice '{safe_voice}': {exc}")
+        raise HTTPException(status_code=500, detail=f"Voice synthesis failed: {str(exc)}")
+
+
+@router.post("/voice/speak")
+async def speak_text(req: VoiceSpeakRequest):
+    """
+    Synthesize arbitrary text with the configured Kokoro-82M voice profile.
+    Returns JSON containing the base64 audio and metadata for seamless UI playback.
+    """
+    agent = sessions.get(req.session_id) if req.session_id else None
+    agent_voice = getattr(agent, "voice_profile", None) if agent else None
+    raw_voice = req.voice or req.voice_id or agent_voice or DEFAULT_VOICE_ID
+    safe_voice = raw_voice if raw_voice in VALID_VOICE_IDS else DEFAULT_VOICE_ID
+
+    clean_text = req.text.replace("#", "").replace("*", "").replace("[END_INTERVIEW]", "").strip()
+    if not clean_text:
+        return {"text": "", "voice": safe_voice, "audio": "", "duration_sec": 0.0}
+
+    try:
+        wav_bytes = await tts_pipeline(clean_text, voice=safe_voice)
+        audio_b64 = base64.b64encode(wav_bytes).decode("ascii") if wav_bytes else ""
+        duration = calculate_audio_duration_sec(wav_bytes)
+        return {
+            "text": clean_text,
+            "voice": safe_voice,
+            "audio": audio_b64,
+            "duration_sec": duration,
+        }
+    except Exception as exc:
+        logger.error(f"[Voice Speak Error] Failed for voice '{safe_voice}': {exc}")
+        raise HTTPException(status_code=500, detail=f"Voice synthesis failed: {str(exc)}")
+
+
+@router.get("/voice/speak")
+async def speak_text_get(text: str, voice: Optional[str] = None, voice_id: Optional[str] = None):
+    """
+    Stream Kokoro-82M synthesized WAV audio directly for any text input.
+    """
+    raw_voice = voice or voice_id or DEFAULT_VOICE_ID
+    safe_voice = raw_voice if raw_voice in VALID_VOICE_IDS else DEFAULT_VOICE_ID
+    clean_text = text.replace("#", "").replace("*", "").replace("[END_INTERVIEW]", "").strip()
+    if not clean_text:
+        raise HTTPException(status_code=400, detail="Empty text parameter")
+
+    try:
+        wav_bytes = await tts_pipeline(clean_text, voice=safe_voice)
+        return StreamingResponse(
+            io.BytesIO(wav_bytes),
+            media_type="audio/wav",
+            headers={
+                "Content-Disposition": f'inline; filename="speak_{safe_voice}.wav"',
+                "Cache-Control": "no-cache",
+            },
+        )
+    except Exception as exc:
+        logger.error(f"[Voice Speak GET Error]: {exc}")
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.post("/voice/transcribe")
+async def transcribe_voice_only(req: VoiceTranscribeRequest):
+    """
+    Transcribe speech audio using Whisper WITHOUT submitting it as an interview reply.
+    Used when the candidate manually closes the microphone so they can edit/send via the Send button.
+    """
+    b64_audio = req.audio_base64 or ""
+    if "," in b64_audio:
+        b64_audio = b64_audio.split(",", 1)[1]
+    if not b64_audio:
+        return {"text": "", "empty": True}
+
+    try:
+        audio_bytes = base64.b64decode(b64_audio)
+    except Exception:
+        return {"text": "", "empty": True}
+
+    if len(audio_bytes) < 400:
+        return {"text": "", "empty": True}
+
+    audio_duration = calculate_audio_duration_sec(audio_bytes)
+
+    fallback_filename = "audio.webm"
+    if req.mime_type:
+        mt = req.mime_type.lower()
+        if "mp4" in mt or "m4a" in mt:
+            fallback_filename = "audio.mp4"
+        elif "ogg" in mt:
+            fallback_filename = "audio.ogg"
+        elif "wav" in mt:
+            fallback_filename = "audio.wav"
+        elif "mpeg" in mt or "mp3" in mt:
+            fallback_filename = "audio.mp3"
+
+    effective_filename = detect_audio_filename(audio_bytes, default=fallback_filename)
+    pipeline = get_interview_pipeline()
+    try:
+        user_text = await pipeline.transcribe_audio(audio_bytes, filename=effective_filename)
+    except Exception as exc:
+        err_str = str(exc)
+        logger.warning(f"[HTTP Transcribe-Only Error]: {err_str}")
+        if "could not be decoded" in err_str or "Invalid file format" in err_str or "400" in err_str:
+            return {"text": "", "empty": True}
+        raise HTTPException(status_code=500, detail=f"Transcription failed: {err_str}")
+
+    if not user_text or is_hallucination(user_text, audio_duration):
+        return {"text": "", "empty": True}
+
+    return {"text": user_text.strip(), "empty": False}
+
+
 @router.websocket("/ws/interview/{session_id}")
 async def websocket_interview_session(websocket: WebSocket, session_id: str):
-    await _handle_interview_websocket(websocket, session_id)
+    voice = websocket.query_params.get("voice") or websocket.query_params.get("voice_id")
+    await _handle_interview_websocket(websocket, session_id, voice=voice)
 
 
 @router.websocket("/ws/interview")
 async def websocket_interview_default(websocket: WebSocket):
-    await _handle_interview_websocket(websocket, session_id=None)
+    voice = websocket.query_params.get("voice") or websocket.query_params.get("voice_id")
+    await _handle_interview_websocket(websocket, session_id=None, voice=voice)
 
 
 async def _run_post_call_evaluation_background(session_id: Optional[str], telemetry: Optional[Any]):
@@ -234,7 +474,7 @@ def is_hallucination(transcript: str, audio_duration: float) -> bool:
     return False
 
 
-async def _handle_interview_websocket(websocket: WebSocket, session_id: Optional[str] = None):
+async def _handle_interview_websocket(websocket: WebSocket, session_id: Optional[str] = None, voice: Optional[str] = None):
     """
     Real-time WebSocket audio interview handler.
     - STT: Azure MaaS Whisper via enterprise gateway
@@ -251,7 +491,14 @@ async def _handle_interview_websocket(websocket: WebSocket, session_id: Optional
     effective_session_id = session_id or f"ws-{uuid.uuid4()}"
     telemetry = get_or_create_telemetry(effective_session_id)
 
-    logger.info(f"WebSocket client connected: session_id={session_id}")
+    # Resolve voice profile: query param > agent stored > default fallback
+    agent_voice = getattr(agent, "voice_profile", None) if agent else None
+    candidate_voice = voice or agent_voice or DEFAULT_VOICE_ID
+    session_voice = candidate_voice if candidate_voice in VALID_VOICE_IDS else DEFAULT_VOICE_ID
+    if agent:
+        agent.voice_profile = session_voice
+        agent.voice_id = session_voice
+    logger.info(f"WebSocket client connected: session_id={session_id}, voice={session_voice}")
 
     ws_lock = asyncio.Lock()
 
@@ -297,16 +544,49 @@ async def _handle_interview_websocket(websocket: WebSocket, session_id: Optional
 
             system_prompt = None
             if agent:
-                system_prompt = (
-                    f"You are roleplaying as {agent.role_id} in an interview setting about '{agent.topic}'. "
-                    f"Scenario: {agent.scenario}. Experience level: {agent.experience}. Communication style: {agent.style}. "
-                    "Engage in a professional, realistic interview dialogue. Keep responses focused and conversational."
-                )
+                if hasattr(agent, "process_turn_state_for_streaming"):
+                    try:
+                        system_prompt = await asyncio.to_thread(agent.process_turn_state_for_streaming, prompt_text)
+                    except Exception as turn_err:
+                        logger.error(f"[RoleAgent Streaming State Error]: {turn_err}")
+                        system_prompt = None
+
+                if not system_prompt:
+                    system_prompt = (
+                        f"You are roleplaying as {agent.role_id} in an interview setting about '{agent.topic}'. "
+                        f"Scenario: {agent.scenario}. Experience level: {agent.experience}. Communication style: {agent.style}. "
+                        "Engage in a professional, realistic interview dialogue. Speak naturally without any markdown headers, bullet points, or bold text. Keep responses focused and conversational."
+                    )
+
+            # Build multi-turn chat_history from persisted session interactions
+            chat_history: List[Dict[str, str]] = []
+            if session_id:
+                try:
+                    stored_interactions = storage.get_interactions(session_id)
+                    if (
+                        stored_interactions
+                        and stored_interactions[-1].get("sender") == "user"
+                        and stored_interactions[-1].get("message") == prompt_text
+                    ):
+                        stored_interactions = stored_interactions[:-1]
+                    for item in stored_interactions:
+                        msg_content = item.get("message", "")
+                        if not msg_content:
+                            continue
+                        role_label = "assistant" if item.get("sender") == "ai" else "user"
+                        chat_history.append({"role": role_label, "content": msg_content})
+                except Exception as hist_err:
+                    logger.debug(f"[WebSocket] Failed to load chat_history for {session_id}: {hist_err}")
+
+            if not chat_history and agent and getattr(agent, "_opening_message", None):
+                chat_history.append({"role": "assistant", "content": agent._opening_message})
 
             full_reply = ""
             async for packet in pipeline.stream_agent_audio_pipeline(
                 prompt=prompt_text,
                 system_prompt=system_prompt,
+                chat_history=chat_history,
+                voice=session_voice,
             ):
                 if packet.get("type") == "audio_chunk":
                     duration = packet.get("duration_sec", 0.0)
@@ -315,10 +595,23 @@ async def _handle_interview_websocket(websocket: WebSocket, session_id: Optional
                     full_reply = packet.get("full_text", "")
                 await safe_send_json(packet)
 
+            if agent and hasattr(agent, "interview_state"):
+                status_val = getattr(agent.interview_state.status, "value", str(agent.interview_state.status))
+                if status_val == "TERMINATED":
+                    await safe_send_json({
+                        "type": "session_terminated",
+                        "status": "TERMINATED",
+                        "reason": getattr(agent.interview_state, "termination_reason", None)
+                        or "Stakeholder terminated the session early.",
+                    })
+
             if session_id and full_reply:
                 storage.save_interaction(session_id, "ai", full_reply)
-                if hasattr(agent, "turn_count"):
-                    agent.turn_count += 1
+                if agent is not None and hasattr(agent, "record_ai_turn"):
+                    try:
+                        agent.record_ai_turn(full_reply)
+                    except Exception:
+                        pass
                 if "### 📊 Interview Complete" in full_reply:
                     storage.save_evaluation(session_id, full_reply)
         except asyncio.CancelledError:
@@ -344,11 +637,22 @@ async def _handle_interview_websocket(websocket: WebSocket, session_id: Optional
                 try:
                     user_text = await pipeline.transcribe_audio(raw_bytes)
                 except Exception as exc:
-                    logger.error(f"[WebSocket STT Error]: {exc}")
-                    await safe_send_json({"type": "error", "error": f"STT failed: {exc}"})
+                    err_str = str(exc)
+                    logger.warning(f"[WebSocket STT Error]: {err_str}")
+                    if "could not be decoded" in err_str or "Invalid file format" in err_str or "400" in err_str:
+                        await safe_send_json({
+                            "type": "transcript_empty",
+                            "reason": "Audio was too short or could not be decoded. Please speak into your microphone."
+                        })
+                    else:
+                        await safe_send_json({"type": "error", "error": f"STT failed: {exc}"})
                     continue
 
                 if not user_text:
+                    await safe_send_json({
+                        "type": "transcript_empty",
+                        "reason": "No speech detected in audio frame."
+                    })
                     continue
 
                 # Whisper Hallucination Filter: Drop phantom phrases on sub-1.5s acoustic bursts
@@ -359,6 +663,10 @@ async def _handle_interview_websocket(websocket: WebSocket, session_id: Optional
                     )
                     if telemetry.active_barge_in or telemetry.barge_in_triggered:
                         telemetry.reset_barge_in_trigger()
+                    await safe_send_json({
+                        "type": "transcript_empty",
+                        "reason": "Filtered non-speech acoustic noise."
+                    })
                     continue
 
                 # Track 1 word & turn correlation
@@ -401,8 +709,19 @@ async def _handle_interview_websocket(websocket: WebSocket, session_id: Optional
 
                 elif msg_type == "user_speech_start":
                     telemetry.on_user_speech_start(timestamp=time.time())
-                    await check_and_handle_barge_in()
                     continue
+
+                elif msg_type in ("set_voice", "voice_change", "update_voice"):
+                    new_voice = data.get("voice") or data.get("voice_id")
+                    if new_voice and new_voice in VALID_VOICE_IDS:
+                        session_voice = new_voice
+                        if agent:
+                            agent.voice_profile = new_voice
+                            agent.voice_id = new_voice
+                        logger.info(f"[WebSocket] Voice dynamically updated to '{session_voice}' for session {session_id}")
+                        await safe_send_json({"type": "voice_updated", "voice": session_voice})
+                    continue
+
 
                 elif msg_type == "audio":
                     b64_audio = data.get("data") or data.get("audio", "")
@@ -415,11 +734,22 @@ async def _handle_interview_websocket(websocket: WebSocket, session_id: Optional
                         await check_and_handle_barge_in()
                         user_text = await pipeline.transcribe_audio(audio_bytes)
                     except Exception as exc:
-                        logger.error(f"[WebSocket Base64 STT Error]: {exc}")
-                        await safe_send_json({"type": "error", "error": f"STT failed: {exc}"})
+                        err_str = str(exc)
+                        logger.warning(f"[WebSocket Base64 STT Error]: {err_str}")
+                        if "could not be decoded" in err_str or "Invalid file format" in err_str or "400" in err_str:
+                            await safe_send_json({
+                                "type": "transcript_empty",
+                                "reason": "Audio was too short or could not be decoded. Please speak into your microphone."
+                            })
+                        else:
+                            await safe_send_json({"type": "error", "error": f"STT failed: {exc}"})
                         continue
 
                     if not user_text:
+                        await safe_send_json({
+                            "type": "transcript_empty",
+                            "reason": "No speech detected in audio frame."
+                        })
                         continue
 
                     # Whisper Hallucination Filter: Drop phantom phrases on sub-1.5s acoustic bursts
@@ -430,6 +760,10 @@ async def _handle_interview_websocket(websocket: WebSocket, session_id: Optional
                         )
                         if telemetry.active_barge_in or telemetry.barge_in_triggered:
                             telemetry.reset_barge_in_trigger()
+                        await safe_send_json({
+                            "type": "transcript_empty",
+                            "reason": "Filtered non-speech acoustic noise."
+                        })
                         continue
 
                     telemetry.on_user_speech_transcribed(user_text, timestamp=time.time())
@@ -445,6 +779,9 @@ async def _handle_interview_websocket(websocket: WebSocket, session_id: Optional
                     user_text = data.get("message") or data.get("text", "")
                     if not user_text:
                         continue
+                    speech_dur = data.get("speech_duration_sec")
+                    if isinstance(speech_dur, (int, float)) and speech_dur > 0:
+                        telemetry.user_active_seconds += float(speech_dur)
                     telemetry.on_user_speech_transcribed(user_text, timestamp=time.time())
                     await check_and_handle_barge_in()
 
@@ -454,6 +791,7 @@ async def _handle_interview_websocket(websocket: WebSocket, session_id: Optional
             # Backchannel filtering check:
             # If AI is currently speaking and user did not trigger an aggressive barge-in,
             # allow AI playback to continue smoothly without interrupting.
+            telemetry._sync_ai_state(time.time())
             is_ai_speaking = (active_ai_task and not active_ai_task.done()) or telemetry.ai_state == "PLAYING"
             if is_ai_speaking and not telemetry.barge_in_triggered:
                 logger.info(
@@ -462,9 +800,12 @@ async def _handle_interview_websocket(websocket: WebSocket, session_id: Optional
                 continue
 
             # Safety check
-            if not is_safe_input(user_text):
-                logger.warning(f"Unsafe input detected in WebSocket session {session_id}")
-                await safe_send_json({"type": "error", "error": "Input violates safety guidelines"})
+            is_safe, safety_err = validate_input(user_text)
+            if not is_safe:
+                logger.warning(f"Unsafe input detected in WebSocket session {session_id}: {safety_err}")
+                notice_msg = f"⚠️ [Input Notice]: {safety_err}"
+                await safe_send_json({"type": "error", "error": notice_msg})
+                await safe_send_json({"type": "turn_complete", "full_text": notice_msg})
                 continue
 
             # Record user interaction in session storage
@@ -495,7 +836,7 @@ async def _handle_interview_websocket(websocket: WebSocket, session_id: Optional
                     if prefix:
                         spoken_text = prefix
 
-                wav_bytes, duration_sec = await pipeline.synthesize_sentence_with_metadata(spoken_text)
+                wav_bytes, duration_sec = await pipeline.synthesize_sentence_with_metadata(spoken_text, voice=session_voice)
                 telemetry.on_ai_audio_chunk(duration_sec=duration_sec, timestamp=time.time())
 
                 audio_b64 = base64.b64encode(wav_bytes).decode("ascii") if wav_bytes else ""
@@ -601,11 +942,30 @@ def get_session_live_state(session_id: str):
 
         persona_cfg = None
         if hasattr(agent, "persona_configuration") and agent.persona_configuration:
-            persona_cfg = agent.persona_configuration.to_dict() if hasattr(agent.persona_configuration, "to_dict") else {
-                "role": agent.persona_configuration.role,
-                "preset": agent.persona_configuration.preset,
-                "traits": agent.persona_configuration.traits,
-            }
+            if hasattr(agent.persona_configuration, "model_dump"):
+                persona_cfg = agent.persona_configuration.model_dump()
+            elif hasattr(agent.persona_configuration, "to_dict"):
+                persona_cfg = agent.persona_configuration.to_dict()
+            elif isinstance(agent.persona_configuration, dict):
+                persona_cfg = agent.persona_configuration
+            else:
+                persona_cfg = {
+                    "role": getattr(agent.persona_configuration, "role", agent.role_id),
+                    "preset": getattr(agent.persona_configuration, "preset", "BALANCED"),
+                    "traits": getattr(agent.persona_configuration, "traits", {}),
+                }
+
+        if not persona_cfg or not persona_cfg.get("traits"):
+            stored_cfg = storage.get_persona_configuration(session_id)
+            if stored_cfg and stored_cfg.get("traits"):
+                persona_cfg = stored_cfg
+            else:
+                try:
+                    from app.roles.traits import resolve_persona_configuration
+                    resolved = resolve_persona_configuration(role=agent.role_id)
+                    persona_cfg = resolved.model_dump()
+                except Exception:
+                    pass
 
         decision_dict = None
         if hasattr(agent, "current_decision") and agent.current_decision:
@@ -817,10 +1177,10 @@ def run_evaluation(request: EvaluationRunRequest):
     try:
         result = runner.run_scenario_evaluation(
             scenario_id=request.scenario_id,
-            architecture_mode=request.architecture_mode,
-            role_id=request.role_id,
-            topic=request.topic,
-            random_seed=request.random_seed,
+            architecture_mode=request.architecture_mode or "FULL_SIMULATOR",
+            role_id=request.role_id or "CTO",
+            topic=request.topic or "Enterprise Cloud Modernization",
+            random_seed=request.random_seed if request.random_seed is not None else 42,
         )
         return result.model_dump()
     except Exception as e:
@@ -903,6 +1263,184 @@ def get_persona_debug_endpoint(session_id: str):
         "total_decisions": len(decisions),
         "recent_decisions": decisions[-5:] if decisions else [],
     }
+
+
+# ==============================================================================
+# ADMIN PERSONA & ROLE CONFIGURATION ENDPOINTS (MULTIPLE PERSONAS PER ROLE)
+# ==============================================================================
+
+@router.get("/admin/personas")
+def get_all_admin_personas():
+    """Retrieve all published admin persona scenarios across all roles."""
+    try:
+        return storage.get_all_admin_persona_scenarios()
+    except Exception as e:
+        logger.error(f"Failed to fetch admin personas: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/admin/personas/by-role/{role}")
+def get_admin_personas_by_role(role: str):
+    """Retrieve all published admin persona scenarios for a specific role."""
+    try:
+        clean_role = role.upper()
+        return storage.get_admin_scenarios_by_role(clean_role)
+    except Exception as e:
+        logger.error(f"Failed to fetch admin personas for role {role}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/admin/personas/{id}")
+def get_admin_persona_by_id(id: str):
+    """Retrieve a specific admin persona scenario by ID."""
+    try:
+        scenario = storage.get_admin_persona_scenario(id)
+        if not scenario:
+            raise HTTPException(status_code=404, detail="Persona scenario not found")
+        return scenario
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to fetch admin persona {id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/admin/personas")
+def save_admin_persona(request: AdminRoleConfigurationRequest):
+    """Create or update a specific admin persona scenario."""
+    try:
+        clean_role = request.role.upper()
+        scenario_id = request.id or f"{clean_role.lower()}-{uuid.uuid4().hex[:8]}"
+        title = request.title or request.scenario_title or f"{clean_role} Persona"
+        saved = storage.save_admin_persona_scenario(
+            scenario_id=scenario_id,
+            role=clean_role,
+            title=title,
+            preset=request.preset or "BALANCED",
+            traits=request.traits or {},
+            experience=request.experience or "expert",
+            style=request.style or "direct",
+            voice=request.voice or "am_onyx",
+            conversation_overview=request.conversation_overview or "",
+            custom_scenario=request.custom_scenario or "",
+            scenario_title=request.scenario_title or title,
+            challenge_tags=request.challenge_tags or [],
+        )
+        return saved
+    except Exception as e:
+        logger.error(f"Failed to save admin persona: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/admin/personas/{id}")
+def delete_admin_persona(id: str):
+    """Delete an admin persona scenario by ID."""
+    try:
+        success = storage.delete_admin_persona_scenario(id)
+        return {
+            "success": success,
+            "id": id,
+            "message": f"Persona scenario {id} deleted successfully."
+        }
+    except Exception as e:
+        logger.error(f"Failed to delete admin persona {id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/admin/configurations")
+def get_all_admin_configurations():
+    """Retrieve all published admin role configurations."""
+    try:
+        return storage.get_all_admin_role_configurations()
+    except Exception as e:
+        logger.error(f"Failed to fetch admin configurations: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/admin/configurations/{id_or_role}")
+def get_admin_configuration_for_role(id_or_role: str):
+    """Retrieve published admin configuration by ID or role, or schema defaults."""
+    try:
+        # First check if ID matches a specific persona scenario
+        specific_scenario = storage.get_admin_persona_scenario(id_or_role)
+        if specific_scenario:
+            return specific_scenario
+
+        clean_role = id_or_role.upper()
+        config = storage.get_admin_role_configuration(clean_role)
+        if config:
+            return config
+        # Return sensible defaults if not yet published by admin
+        schema = get_role_configuration_schema(clean_role)
+        default_traits = {t.id: t.default for t in schema.traits}
+        default_voice = "am_onyx" if clean_role in ["CTO", "CEO"] else "af_heart"
+        return {
+            "id": f"{clean_role.lower()}-default",
+            "role": clean_role,
+            "title": f"Default {clean_role} Persona",
+            "preset": "BALANCED",
+            "traits": default_traits,
+            "experience": "expert",
+            "style": "direct",
+            "voice": default_voice,
+            "conversation_overview": "",
+            "custom_scenario": "",
+            "scenario_title": "",
+            "challenge_tags": [],
+            "updated_at": None,
+        }
+    except Exception as e:
+        logger.error(f"Failed to fetch admin configuration for {id_or_role}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/admin/configurations")
+def save_admin_configuration(request: AdminRoleConfigurationRequest):
+    """Save and publish admin role configuration and persona scenario."""
+    try:
+        clean_role = request.role.upper()
+        scenario_id = request.id or f"{clean_role.lower()}-canonical"
+        title = request.title or request.scenario_title or f"{clean_role} Persona"
+
+        saved = storage.save_admin_persona_scenario(
+            scenario_id=scenario_id,
+            role=clean_role,
+            title=title,
+            preset=request.preset or "BALANCED",
+            traits=request.traits or {},
+            experience=request.experience or "expert",
+            style=request.style or "direct",
+            voice=request.voice or "am_onyx",
+            conversation_overview=request.conversation_overview or "",
+            custom_scenario=request.custom_scenario or "",
+            scenario_title=request.scenario_title or title,
+            challenge_tags=request.challenge_tags or [],
+        )
+        return saved
+    except Exception as e:
+        logger.error(f"Failed to save admin configuration: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/admin/configurations/{id_or_role}")
+def delete_admin_configuration(id_or_role: str):
+    """Delete a published admin persona scenario or role configuration."""
+    try:
+        persona_deleted = storage.delete_admin_persona_scenario(id_or_role)
+        storage.delete_admin_persona_scenario(f"{id_or_role.lower()}-canonical")
+        role_deleted = storage.delete_admin_role_configuration(id_or_role.upper())
+        success = persona_deleted or role_deleted
+        return {
+            "success": success,
+            "role": id_or_role.upper(),
+            "target": id_or_role,
+            "message": f"Configuration for {id_or_role} deleted successfully."
+        }
+    except Exception as e:
+        logger.error(f"Failed to delete admin configuration for {id_or_role}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 
 
 # ==============================================================================

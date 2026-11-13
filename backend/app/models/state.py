@@ -124,6 +124,6 @@ class InteractionSignal(BaseModel):
         "price_concession",
         "unprofessional_behavior",
     ] = Field(..., description="Category of candidate behavior detected in interaction")
-    details: Optional[str] = Field(None, description="Supporting context or extracted phrase")
-    reason: Optional[str] = Field(None, description="Optional custom rationale")
+    details: Optional[str] = Field(default=None, description="Supporting context or extracted phrase")
+    reason: Optional[str] = Field(default=None, description="Optional custom rationale")
 

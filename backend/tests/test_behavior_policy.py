@@ -263,7 +263,7 @@ class TestBehaviorPolicy(unittest.TestCase):
 
         self.assertEqual(decision.primary_action.action_type, ActionType.CHALLENGE_CLAIM)
         self.assertEqual(decision.primary_action.target, "latency")
-        self.assertIsNotNone(decision.secondary_action)
+        assert decision.secondary_action is not None
         self.assertEqual(decision.secondary_action.action_type, ActionType.REQUEST_EVIDENCE)
         self.assertEqual(decision.policy_id, "unsupported_quantitative_claim")
 
@@ -302,6 +302,7 @@ class TestBehaviorPolicy(unittest.TestCase):
         )
 
         self.assertEqual(decision.primary_action.action_type, ActionType.ACKNOWLEDGE_POINT)
+        assert decision.secondary_action is not None
         self.assertEqual(decision.secondary_action.action_type, ActionType.PROBE_TECHNICAL_DETAIL)
         self.assertEqual(decision.policy_id, "high_evidence_technical")
 
@@ -326,6 +327,7 @@ class TestBehaviorPolicy(unittest.TestCase):
         )
 
         self.assertEqual(decision.primary_action.action_type, ActionType.PUSH_BACK)
+        assert decision.secondary_action is not None
         self.assertEqual(decision.secondary_action.action_type, ActionType.FOLLOW_UP)
         self.assertEqual(decision.policy_id, "candidate_dodges_evasive")
 
@@ -352,6 +354,7 @@ class TestBehaviorPolicy(unittest.TestCase):
         )
 
         self.assertEqual(decision.primary_action.action_type, ActionType.REVEAL_INFORMATION)
+        assert decision.secondary_action is not None
         self.assertEqual(decision.secondary_action.action_type, ActionType.EXPRESS_INTEREST)
         self.assertEqual(decision.policy_id, "strong_discovery_pain_uncovered")
         # Authorized pain point from World Model is populated
@@ -749,7 +752,7 @@ class TestBehaviorPolicy(unittest.TestCase):
         self.assertEqual(agent.turn_count, 1)
 
         # Verify behavioral decision was produced and stored on agent
-        self.assertIsNotNone(agent.current_decision)
+        assert agent.current_decision is not None
         self.assertEqual(agent.current_decision.primary_action.action_type, ActionType.CHALLENGE_CLAIM)
         self.assertEqual(agent.current_decision.primary_action.target, "ROI")
 

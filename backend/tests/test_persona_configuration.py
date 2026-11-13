@@ -368,7 +368,7 @@ class TestPersonaConfiguration:
         # Dynamic evolution does not alter configured traits
         delta = ClientStateManager.calculate_delta(
             current_state=initial_state,
-            signal=InteractionSignal(type="positive_evidence", confidence=0.9, reason="Strong benchmarks provided"),
+            signal=InteractionSignal(type="positive_evidence", reason="Strong benchmarks provided"),
             persona=persona,
         )
         updated_state = initial_state.apply_delta(delta)

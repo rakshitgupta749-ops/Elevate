@@ -129,14 +129,11 @@ class TestMemoryKnowledge(unittest.TestCase):
         )
 
         self.client_state = ClientState(
-            role="CTO",
             patience=0.6,
             skepticism=0.5,
             engagement=0.6,
-            rapport=0.5,
-            perceived_competence=0.5,
+            confidence_in_candidate=0.5,
             trust=0.4,
-            current_objection=None,
         )
 
         self.interview_state = InterviewState(
@@ -190,7 +187,7 @@ class TestMemoryKnowledge(unittest.TestCase):
         self.assertIn("trust", conf_decision_low.reason.lower())
 
         # 4. Confidential topic with high trust (trust = 0.85) -> permitted
-        high_trust_state = ClientState(role="CTO", trust=0.85, perceived_competence=0.8)
+        high_trust_state = ClientState(trust=0.85, confidence_in_candidate=0.8)
         conf_decision_high = knowledge_state.evaluate_access("unannounced roadmap", high_trust_state, self.interview_state)
         self.assertTrue(conf_decision_high.permitted)
 
@@ -200,7 +197,7 @@ class TestMemoryKnowledge(unittest.TestCase):
         
         # Verify initial immutable fact
         tech_fact = registry.get_fact("company.cloud_provider")
-        self.assertIsNotNone(tech_fact)
+        assert tech_fact is not None
         self.assertEqual(tech_fact.value, "Azure")
         self.assertTrue(tech_fact.immutable)
 
@@ -217,7 +214,9 @@ class TestMemoryKnowledge(unittest.TestCase):
         self.assertIn("immutable", str(ctx.exception).lower())
 
         # Verify fact remained Azure
-        self.assertEqual(registry.get_fact("company.cloud_provider").value, "Azure")
+        unchanged_fact = registry.get_fact("company.cloud_provider")
+        assert unchanged_fact is not None
+        self.assertEqual(unchanged_fact.value, "Azure")
 
     def test_04_world_fact_contradiction_detection(self):
         """Test checking contradiction against immutable scenario world facts."""
@@ -225,7 +224,7 @@ class TestMemoryKnowledge(unittest.TestCase):
         
         # Azure is ground truth
         contradiction = registry.check_contradiction("company.cloud_provider", "AWS")
-        self.assertIsNotNone(contradiction)
+        assert contradiction is not None
         self.assertIn("Contradiction", contradiction)
 
         # Consistent value -> No contradiction

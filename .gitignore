@@ -84,6 +84,10 @@ coverage.xml
 *.py,cover
 .hypothesis/
 
+# Executables & Binaries
+*.exe
+*.dll
+
 # IDE & OS Files
 .DS_Store
 .DS_Store?

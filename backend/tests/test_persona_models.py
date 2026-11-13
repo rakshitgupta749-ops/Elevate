@@ -126,7 +126,7 @@ class TestPersonaModels(unittest.TestCase):
                 id="goal_1",
                 description="Invalid type goal",
                 priority=0.5,
-                type="invalid_type",
+                type="invalid_type",  # type: ignore[arg-type]
                 success_condition="Should fail",
             )
 
@@ -157,7 +157,7 @@ class TestPersonaModels(unittest.TestCase):
                 id="inc_bad",
                 description="Bad category",
                 importance=0.5,
-                category="random_category",
+                category="random_category",  # type: ignore[arg-type]
             )
 
         # Importance < 0.0 must fail
@@ -266,7 +266,7 @@ class TestPersonaModels(unittest.TestCase):
         self.assertEqual(persona.profile.technical_depth, "Deep Architectural")
         self.assertTrue(any(v.name == "reliability" for v in persona.values))
         self.assertTrue(any(g.id == "verify_architectural_fit" for g in persona.goals))
-        self.assertIsNotNone(persona.world_model)
+        assert persona.world_model is not None
         self.assertIn("Kubernetes", persona.world_model.current_technology_stack)
 
     def test_9_load_ceo_persona(self):

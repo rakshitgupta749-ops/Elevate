@@ -63,7 +63,7 @@ class BaselineRunner:
             except Exception:
                 legacy_prompt = f"You are a simulated {role_id} in an enterprise sales interview."
 
-            messages = [SystemMessage(content=legacy_prompt)]
+            messages: List[Any] = [SystemMessage(content=legacy_prompt)]
             state_trajectory.append({"turn": 0, "trust": 0.5, "skepticism": 0.5})
 
             for idx, candidate_text in enumerate(scenario.candidate_turns):

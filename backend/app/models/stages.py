@@ -39,8 +39,8 @@ class StageCriterion(BaseModel):
     stage: InterviewStage = Field(..., description="Stage where this criterion belongs")
     required: bool = Field(default=False, description="Whether this criterion is mandatory for stage completion")
     satisfied: bool = Field(default=False, description="Whether this criterion has been met")
-    satisfied_at_turn: Optional[int] = Field(None, description="Turn number when criterion was satisfied")
-    evidence: Optional[str] = Field(None, description="Candidate excerpt or signal evidence satisfying the criterion")
+    satisfied_at_turn: Optional[int] = Field(default=None, description="Turn number when criterion was satisfied")
+    evidence: Optional[str] = Field(default=None, description="Candidate excerpt or signal evidence satisfying the criterion")
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -96,7 +96,7 @@ class InterviewState(BaseModel):
     status: InterviewStatus = Field(default=InterviewStatus.ACTIVE, description="Lifecycle status")
     criteria: Dict[str, StageCriterion] = Field(default_factory=dict, description="Registry of all stage criteria")
     history: List[StageTransitionEvent] = Field(default_factory=list, description="Audit log of stage transitions")
-    termination_reason: Optional[str] = Field(None, description="Reason if early termination occurred")
+    termination_reason: Optional[str] = Field(default=None, description="Reason if early termination occurred")
 
     @property
     def stage_history(self) -> List[Dict[str, Any]]:

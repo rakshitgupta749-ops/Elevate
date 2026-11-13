@@ -47,9 +47,9 @@ class ExpectedBehavior(BaseModel):
         default_factory=dict,
         description="Expected directional shifts, e.g. {'trust': 'increase', 'skepticism': 'decrease'}"
     )
-    goal_relevance: Optional[str] = Field(None, description="Persona goal ID or theme being evaluated")
+    goal_relevance: Optional[str] = Field(default=None, description="Persona goal ID or theme being evaluated")
     required_information_behavior: Optional[str] = Field(
-        "none", description="'withhold', 'reveal', or 'none'"
+        default="none", description="'withhold', 'reveal', or 'none'"
     )
 
 
@@ -58,7 +58,7 @@ class ControlledScenario(BaseModel):
     scenario_id: str = Field(..., description="Unique scenario identifier, e.g. SCENARIO_A_STRONG_CANDIDATE")
     title: str = Field(..., description="Human-readable title")
     description: str = Field(..., description="Detailed test scenario description")
-    target_role: str = Field("CTO", description="Target simulated persona role (CTO, CFO, etc.)")
+    target_role: str = Field(default="CTO", description="Target simulated persona role (CTO, CFO, etc.)")
     candidate_turns: List[str] = Field(..., description="Pre-scripted candidate speech turns")
     expected_trajectories: List[ExpectedBehavior] = Field(
         default_factory=list, description="Behavioral expectations per turn range"
@@ -66,7 +66,7 @@ class ControlledScenario(BaseModel):
     expected_state_pattern: Dict[str, str] = Field(
         default_factory=dict, description="High-level state pattern, e.g. {'trust': 'overall_increase'}"
     )
-    version: str = Field("1.0.0", description="Scenario specification version")
+    version: str = Field(default="1.0.0", description="Scenario specification version")
 
 
 class TurnEvaluation(BaseModel):
@@ -75,9 +75,9 @@ class TurnEvaluation(BaseModel):
     candidate_input: str
     stakeholder_response: str
     selected_action: Optional[str] = None
-    action_alignment: float = Field(1.0, ge=0.0, le=1.0)
+    action_alignment: float = Field(default=1.0, ge=0.0, le=1.0)
     state_snapshot: Optional[Dict[str, float]] = None
-    state_coherence_turn: float = Field(1.0, ge=0.0, le=1.0)
+    state_coherence_turn: float = Field(default=1.0, ge=0.0, le=1.0)
     violations: List[str] = Field(default_factory=list)
     failure_categories: List[SimulatorFailureCategory] = Field(default_factory=list)
     latency_ms: float = 0.0
@@ -103,8 +103,8 @@ class SimulatorEvaluation(BaseModel):
     action_response_alignment: float = Field(..., ge=0.0, le=1.0, description="Execution match between policy action and verbal response")
     memory_consistency: float = Field(..., ge=0.0, le=1.0, description="Recall of past turns and contradiction handling")
     overall_fidelity: float = Field(..., ge=0.0, le=1.0, description="Weighted composite engineering fidelity score")
-    persona_collapse_score: float = Field(0.0, ge=0.0, le=1.0, description="Divergence from other personas (1.0 = highly distinct, 0.0 = collapsed)")
-    evaluation_method: str = Field("deterministic_rules+llm_judge")
+    persona_collapse_score: float = Field(default=0.0, ge=0.0, le=1.0, description="Divergence from other personas (1.0 = highly distinct, 0.0 = collapsed)")
+    evaluation_method: str = Field(default="deterministic_rules+llm_judge")
     failure_categories: List[SimulatorFailureCategory] = Field(default_factory=list)
     turn_evaluations: List[TurnEvaluation] = Field(default_factory=list)
     state_trajectory: List[Dict[str, Any]] = Field(default_factory=list)

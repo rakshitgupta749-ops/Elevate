@@ -78,7 +78,7 @@ class TopicModel(BaseModel):
     icon: str
 
 class SessionRequest(BaseModel):
-    topic: str
+    topic: Optional[str] = None
     role: str
     scenario: str
     experience: str
@@ -87,10 +87,25 @@ class SessionRequest(BaseModel):
     memory_mode: Optional[str] = "full"
     architecture_mode: Optional[str] = "FULL_SIMULATOR"
     persona_configuration: Optional[PersonaConfiguration] = None
+    voice: Optional[str] = None
+    voice_id: Optional[str] = None
+    admin_configuration_id: Optional[str] = None
 
 class SessionResponse(BaseModel):
     session_id: str
     initial_message: Optional[str] = None
+    initial_audio: Optional[str] = None
+    voice: Optional[str] = None
+
+class VoiceSpeakRequest(BaseModel):
+    text: str
+    voice: Optional[str] = None
+    voice_id: Optional[str] = None
+    session_id: Optional[str] = None
+
+class VoiceTranscribeRequest(BaseModel):
+    audio_base64: str
+    mime_type: Optional[str] = None
 
 class ChatRequest(BaseModel):
     session_id: str
@@ -119,6 +134,22 @@ class HumanRatingRequest(BaseModel):
     overall_realism: int
     free_text_feedback: Optional[str] = ""
     behavioral_agreement_ratings: Optional[dict] = {}
+
+
+class AdminRoleConfigurationRequest(BaseModel):
+    id: Optional[str] = None
+    role: str
+    title: Optional[str] = ""
+    preset: Optional[str] = "BALANCED"
+    traits: Optional[dict] = None
+    experience: Optional[str] = "expert"
+    style: Optional[str] = "direct"
+    voice: Optional[str] = "am_onyx"
+    conversation_overview: Optional[str] = ""
+    custom_scenario: Optional[str] = ""
+    scenario_title: Optional[str] = ""
+    challenge_tags: Optional[List[str]] = None
+
 
 
 # Re-export coaching, lifecycle & history components (Priority P0 & P1)

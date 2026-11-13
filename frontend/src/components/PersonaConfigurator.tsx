@@ -158,8 +158,8 @@ export const PersonaConfigurator: React.FC = () => {
 
   if (loading && !schema) {
     return (
-      <div className="p-6 rounded-2xl border border-slate-200 bg-slate-50/50 flex items-center justify-center gap-3 text-slate-500">
-        <span className="w-4 h-4 border-2 border-[var(--color-primary)] border-t-transparent rounded-full animate-spin" />
+      <div className="p-6 rounded-2xl border border-slate-800 bg-slate-900/60 flex items-center justify-center gap-3 text-slate-400">
+        <span className="w-4 h-4 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
         <span>Loading role trait configuration schema...</span>
       </div>
     );
@@ -167,7 +167,7 @@ export const PersonaConfigurator: React.FC = () => {
 
   if (error && !schema) {
     return (
-      <div className="p-4 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 flex items-center gap-3 text-sm">
+      <div className="p-4 rounded-xl bg-amber-950/40 border border-amber-500/30 text-amber-300 flex items-center gap-3 text-sm">
         <ShieldAlert size={18} />
         <span>{error}</span>
       </div>
@@ -182,22 +182,22 @@ export const PersonaConfigurator: React.FC = () => {
       <div>
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2">
-            <Sliders size={20} className="text-[var(--color-primary)]" />
-            <h2 className="text-lg font-semibold text-slate-900">Persona Configuration</h2>
-            <span className="text-xs px-2.5 py-0.5 rounded-full bg-indigo-50 text-[var(--color-primary)] font-medium">
-              Phase 9
+            <Sliders size={20} className="text-indigo-400" />
+            <h2 className="text-lg font-semibold text-white">Persona Configuration</h2>
+            <span className="text-xs px-2.5 py-0.5 rounded-full bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 font-medium">
+              Behavioral Traits
             </span>
           </div>
           <button
             onClick={handleResetDefaults}
             type="button"
-            className="flex items-center gap-1.5 text-xs text-slate-500 hover:text-slate-800 transition-colors px-2.5 py-1 rounded-lg hover:bg-slate-100"
+            className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-white transition-colors px-2.5 py-1 rounded-lg hover:bg-slate-800 border border-slate-800"
           >
             <RotateCcw size={13} />
             <span>Reset Defaults</span>
           </button>
         </div>
-        <p className="text-sm text-slate-600 mb-4">
+        <p className="text-sm text-slate-400 mb-4 leading-relaxed">
           Select a persona preset or customize individual behavioral traits. Configuration directly governs stakeholder policy thresholds, reaction intensity, and initial perception state.
         </p>
 
@@ -210,10 +210,10 @@ export const PersonaConfigurator: React.FC = () => {
                 key={preset.id}
                 type="button"
                 onClick={() => handleSelectPreset(preset)}
-                className={`px-3.5 py-1.5 rounded-xl text-xs font-medium transition-all flex items-center gap-1.5 border ${
+                className={`px-3.5 py-1.5 rounded-xl text-xs font-medium transition-all flex items-center gap-1.5 border cursor-pointer ${
                   isSelected
-                    ? 'bg-[var(--color-primary)] text-white border-[var(--color-primary)] shadow-sm'
-                    : 'bg-white text-slate-700 border-slate-200 hover:border-slate-300 hover:bg-slate-50'
+                    ? 'bg-indigo-600 text-white border-indigo-500 shadow-md shadow-indigo-600/30'
+                    : 'bg-slate-900/80 text-slate-300 border-slate-800 hover:border-slate-700 hover:bg-slate-850'
                 }`}
               >
                 {isSelected && <CheckCircle2 size={13} />}
@@ -227,7 +227,7 @@ export const PersonaConfigurator: React.FC = () => {
       {/* Live Persona Preview Card */}
       <motion.div
         layout
-        className="p-5 rounded-xl bg-gradient-to-br from-slate-900 to-indigo-950 text-white shadow-sm border border-slate-800"
+        className="p-5 rounded-xl bg-slate-950/80 text-white shadow-lg border border-slate-800"
       >
         <div className="flex items-center gap-2 mb-2">
           <Sparkles size={16} className="text-indigo-400" />
@@ -238,14 +238,14 @@ export const PersonaConfigurator: React.FC = () => {
             Preset: <span className="text-white font-medium">{selectedPreset || 'BALANCED'}</span>
           </span>
         </div>
-        <p className="text-sm text-slate-200 leading-relaxed italic">
+        <p className="text-sm text-slate-300 leading-relaxed italic">
           "{liveSummary}"
         </p>
       </motion.div>
 
       {/* Trait Sliders Grid */}
       <div className="space-y-4 pt-2">
-        <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+        <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400">
           Role-Specific Behavioral Sliders ({schema.display_name})
         </h3>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -256,21 +256,21 @@ export const PersonaConfigurator: React.FC = () => {
               const percentValue = Math.round(currentValue * 100);
 
               // Color badge calculation
-              let badgeColor = 'bg-slate-100 text-slate-700';
-              if (percentValue >= 80) badgeColor = 'bg-indigo-100 text-indigo-800 font-semibold';
-              else if (percentValue <= 35) badgeColor = 'bg-slate-200 text-slate-700';
+              let badgeColor = 'bg-slate-800 text-slate-300 border border-slate-700';
+              if (percentValue >= 80) badgeColor = 'bg-indigo-950/60 text-indigo-300 border border-indigo-500/40 font-semibold';
+              else if (percentValue <= 35) badgeColor = 'bg-slate-850 text-slate-400 border border-slate-700/60';
 
               return (
                 <div
                   key={trait.id}
-                  className="p-4 rounded-xl border border-slate-200 bg-white/80 hover:border-slate-300 transition-colors space-y-2.5"
+                  className="p-4 rounded-xl border border-slate-800 bg-slate-950/70 hover:border-slate-700 transition-colors space-y-2.5"
                 >
                   <div className="flex items-center justify-between">
                     <div>
-                      <span className="text-sm font-medium text-slate-900 block">
+                      <span className="text-sm font-medium text-white block">
                         {trait.display_name}
                       </span>
-                      <span className="text-xs text-slate-500 block leading-tight mt-0.5">
+                      <span className="text-xs text-slate-400 block leading-tight mt-0.5">
                         {trait.description}
                       </span>
                     </div>
@@ -290,9 +290,9 @@ export const PersonaConfigurator: React.FC = () => {
                         const val = parseFloat(e.target.value) / 100.0;
                         setCustomTrait(trait.id, val);
                       }}
-                      className="w-full accent-[var(--color-primary)] cursor-pointer h-1.5 bg-slate-200 rounded-lg appearance-none"
+                      className="w-full accent-indigo-500 cursor-pointer h-1.5 bg-slate-800 rounded-lg appearance-none"
                     />
-                    <div className="flex justify-between text-[10px] text-slate-400">
+                    <div className="flex justify-between text-[10px] text-slate-500">
                       <span>Low (0%)</span>
                       <span>Moderate (50%)</span>
                       <span>High (100%)</span>

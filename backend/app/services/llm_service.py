@@ -16,7 +16,7 @@ def get_llm():
     return ChatOpenAI(
         base_url="https://genailab.tcs.in",
         model="azure/genailab-maas-gpt-4o-mini",
-        api_key=api_key,
+        api_key=api_key,  # type: ignore[arg-type]
         http_client=client,
         temperature=0.7
     )

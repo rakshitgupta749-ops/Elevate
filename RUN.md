@@ -2,6 +2,36 @@
 
 Follow these instructions to run the Elevate prototype locally.
 
+## Quick Start (Automated)
+
+### Windows (PowerShell)
+Run both backend and frontend servers simultaneously using:
+
+```powershell
+.\run.ps1
+```
+
+> **Tip**: To launch each server in its own separate console window, run:
+> ```powershell
+> .\run.ps1 -SeparateWindows
+> ```
+> If script execution is restricted on your machine, run:
+> ```powershell
+> powershell -ExecutionPolicy Bypass -File .\run.ps1
+> ```
+
+### Linux / macOS (Bash)
+Run both servers simultaneously using:
+
+```bash
+chmod +x run.sh
+./run.sh
+```
+
+---
+
+## Manual Start (Two Terminals)
+
 ## 1. Run the Backend
 
 Open a terminal, navigate to the `backend` folder, and start the FastAPI server:

@@ -110,23 +110,23 @@ class KnowledgeBoundary(BaseModel):
 
 class CompanyContext(BaseModel):
     """World Model representing the external operating environment of the enterprise."""
-    company_name: Optional[str] = Field("Enterprise Global", description="Company or organization name")
+    company_name: Optional[str] = Field(default="Enterprise Global", description="Company or organization name")
     industry: str = Field(..., description="Industry sector, e.g., 'Enterprise FinTech'")
     company_size: str = Field(..., description="Company size scale, e.g., '5,000+ employees (Enterprise)'")
-    company_stage: Optional[str] = Field(None, description="Stage, e.g., 'Public Enterprise', 'Series C', 'Mature'")
-    approximate_revenue_band: Optional[str] = Field(None, description="Revenue range, e.g., '$500M - $1B ARR'")
+    company_stage: Optional[str] = Field(default=None, description="Stage, e.g., 'Public Enterprise', 'Series C', 'Mature'")
+    approximate_revenue_band: Optional[str] = Field(default=None, description="Revenue range, e.g., '$500M - $1B ARR'")
     current_technology_stack: List[str] = Field(default_factory=list, description="Current primary tools, clouds, architectures")
     incumbent_vendors: List[str] = Field(default_factory=list, description="Existing software/vendors in place")
     business_priorities: List[str] = Field(default_factory=list, description="Top strategic corporate goals for the current fiscal year")
     pain_points: List[str] = Field(default_factory=list, description="Existing operational, technical, or cost problems")
     constraints: List[str] = Field(default_factory=list, description="Hard constraints, e.g., SOC2, On-premises requirement")
-    budget_constraints: Optional[str] = Field(None, description="Budget posture, e.g., 'Capped at $150k OpEx'")
-    timeline: Optional[str] = Field(None, description="Project or decision timeline, e.g., 'Q3 procurement cycle'")
-    regulatory_environment: Optional[str] = Field(None, description="Governing compliance frameworks, e.g., 'HIPAA, GDPR, PCI-DSS'")
-    organizational_structure: Optional[str] = Field(None, description="Structure, e.g., 'Decentralized engineering with centralized security'")
+    budget_constraints: Optional[str] = Field(default=None, description="Budget posture, e.g., 'Capped at $150k OpEx'")
+    timeline: Optional[str] = Field(default=None, description="Project or decision timeline, e.g., 'Q3 procurement cycle'")
+    regulatory_environment: Optional[str] = Field(default=None, description="Governing compliance frameworks, e.g., 'HIPAA, GDPR, PCI-DSS'")
+    organizational_structure: Optional[str] = Field(default=None, description="Structure, e.g., 'Decentralized engineering with centralized security'")
     relevant_stakeholders: List[str] = Field(default_factory=list, description="Other stakeholders involved in evaluation, e.g., ['CFO', 'VP Eng']")
-    internal_politics: Optional[str] = Field(None, description="Political tensions or dynamics, e.g., 'Friction between Product and Security'")
-    current_initiative: Optional[str] = Field(None, description="Active corporate project name, e.g., 'Cloud Migration 2026'")
+    internal_politics: Optional[str] = Field(default=None, description="Political tensions or dynamics, e.g., 'Friction between Product and Security'")
+    current_initiative: Optional[str] = Field(default=None, description="Active corporate project name, e.g., 'Cloud Migration 2026'")
 
 
 class EnterprisePersona(BaseModel):
@@ -136,7 +136,7 @@ class EnterprisePersona(BaseModel):
     goals: List[StakeholderGoal] = Field(default_factory=list, description="Evaluation goals and dealbreakers")
     incentives: List[Incentive] = Field(default_factory=list, description="Organizational, personal, and political incentives")
     knowledge_boundary: KnowledgeBoundary = Field(default_factory=KnowledgeBoundary, description="Epistemic limits")
-    world_model: Optional[CompanyContext] = Field(None, description="Company and scenario environment")
+    world_model: Optional[CompanyContext] = Field(default=None, description="Company and scenario environment")
 
     @field_validator("values")
     @classmethod

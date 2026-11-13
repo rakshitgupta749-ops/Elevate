@@ -151,7 +151,7 @@ class TestInterviewStateMachine(unittest.TestCase):
         # Now satisfy business pain
         state.criteria["business_pain_identified"].satisfied = True
         event = self.manager.evaluate_stage_transition(state)
-        self.assertIsNotNone(event)
+        assert event is not None
         self.assertEqual(event.to_stage, InterviewStage.STAGE_3_SOLUTION_ALIGNMENT)
         self.assertEqual(state.current_stage, InterviewStage.STAGE_3_SOLUTION_ALIGNMENT)
         self.assertEqual(state.stage_turn_count, 0)
@@ -166,7 +166,7 @@ class TestInterviewStateMachine(unittest.TestCase):
         state.criteria["rapport_established"].satisfied = False
 
         event = self.manager.evaluate_stage_transition(state)
-        self.assertIsNotNone(event)
+        assert event is not None
         self.assertEqual(event.from_stage, InterviewStage.STAGE_1_OPENING_RAPPORT)
         self.assertEqual(event.to_stage, InterviewStage.STAGE_2_PROBLEM_DISCOVERY)
         self.assertIn("Maximum stage turn limit", event.reason)
@@ -230,7 +230,7 @@ class TestInterviewStateMachine(unittest.TestCase):
         state.criteria["rapport_established"].satisfied = True
 
         event = self.manager.evaluate_stage_transition(state)
-        self.assertIsInstance(event, StageTransitionEvent)
+        assert isinstance(event, StageTransitionEvent)
         self.assertEqual(event.turn, 1)
         self.assertEqual(event.from_stage, InterviewStage.STAGE_1_OPENING_RAPPORT)
         self.assertEqual(event.to_stage, InterviewStage.STAGE_2_PROBLEM_DISCOVERY)
@@ -389,9 +389,9 @@ class TestInterviewStateMachine(unittest.TestCase):
         )
 
         event = self.manager.evaluate_stage_transition(state, client_state=client_state)
-        self.assertIsNotNone(event)
+        assert event is not None
         self.assertEqual(state.status, InterviewStatus.TERMINATED)
-        self.assertIn("reached critical ceiling", state.termination_reason)
+        self.assertIn("reached critical ceiling", state.termination_reason or "")
 
     def test_15_max_total_turns_completion(self):
         """Verify reaching max_total_turns forces interview completion."""
@@ -400,7 +400,7 @@ class TestInterviewStateMachine(unittest.TestCase):
         state.stage_turn_count = 1
 
         event = self.manager.evaluate_stage_transition(state)
-        self.assertIsNotNone(event)
+        assert event is not None
         self.assertEqual(state.status, InterviewStatus.COMPLETED)
         self.assertIn("maximum total turn limit", event.reason)
 

@@ -68,15 +68,96 @@ def calculate_delivery_numerical_score(delivery: DeliveryScorecard) -> float:
     return max(20.0, min(100.0, score))
 
 
-def calculate_overall_readiness_score(delivery: DeliveryScorecard, strategic: StrategicScorecard) -> int:
-    """Calculates scaled 1-100 readiness score combining delivery (40%) and strategic content (60%)."""
+def compute_stakeholder_momentum(session_id: str) -> int:
+    """
+    Computes Stakeholder Perception Momentum (Track 3) by measuring net delta in trust,
+    skepticism reduction, and risk mitigation from initial baseline.
+    Avoids penalizing candidates for an executive's naturally cautious starting baseline.
+    """
+    try:
+        snapshots = storage.get_state_history(session_id)
+        if len(snapshots) >= 2:
+            first_state = snapshots[0].get("state", {})
+            last_state = snapshots[-1].get("state", {})
+
+            delta_trust = float(last_state.get("trust", 0.50)) - float(first_state.get("trust", 0.50))
+            delta_skep = float(first_state.get("skepticism", 0.60)) - float(last_state.get("skepticism", 0.60))
+            delta_risk = float(first_state.get("perceived_risk", 0.50)) - float(last_state.get("perceived_risk", 0.50))
+
+            net_shift = (delta_trust + delta_skep + delta_risk) / 3.0
+            return int(max(20, min(100, round(70.0 + (net_shift * 100.0)))))
+    except Exception as exc:
+        logger.debug(f"Could not compute momentum delta for session {session_id}: {exc}")
+    return 75
+
+
+def calculate_overall_readiness_score(
+    delivery: DeliveryScorecard,
+    strategic: StrategicScorecard,
+    momentum_score: Optional[int] = None,
+) -> int:
+    """
+    Calculates unified 1-100 readiness score combining:
+    - Track 1: Deterministic Delivery Telemetry (30%)
+    - Track 2: Strategic Content Rubric (50%)
+    - Track 3: Stakeholder Perception Momentum Delta (20%)
+    """
     deliv_score = calculate_delivery_numerical_score(delivery)
     strat_score = (
         strategic.discovery_score + strategic.objection_handling_score + strategic.value_proposition_score
     ) / 3.0
 
-    combined = round(0.40 * deliv_score + 0.60 * strat_score)
+    if momentum_score is not None:
+        combined = round(0.30 * deliv_score + 0.50 * strat_score + 0.20 * momentum_score)
+    else:
+        combined = round(0.35 * deliv_score + 0.65 * strat_score)
+
     return int(max(1, min(100, combined)))
+
+
+def get_letter_grade(score: int) -> str:
+    """Harmonized letter grade mapping used across all scorecard and coaching views."""
+    if score >= 90:
+        return "A+"
+    elif score >= 82:
+        return "A"
+    elif score >= 74:
+        return "B"
+    elif score >= 65:
+        return "C"
+    elif score >= 50:
+        return "D"
+    else:
+        return "F"
+
+
+def get_outcome_verdict(score: int, role: str = "Executive") -> tuple[str, str]:
+    """Harmonized business outcome verdict mapping aligned with the readiness score."""
+    if score >= 80:
+        verdict = "Follow-up Secured / Strong Executive Buy-in"
+        summary = (
+            f"The {role} gained high confidence and trust in your solution. "
+            f"Next steps for a technical demo, formal proposal review, or pilot scoping were successfully unlocked."
+        )
+    elif score >= 65:
+        verdict = "Positive Alignment / Pending Due Diligence"
+        summary = (
+            f"The {role} showed solid interest and strategic alignment, but requires additional validation on "
+            f"integration, proof points, or risk mitigation before formal commitment."
+        )
+    elif score >= 50:
+        verdict = "Conditional Interest / Substantial Proof Required"
+        summary = (
+            f"The {role} remains cautious. Key skepticism or perceived organizational risk "
+            f"requires deeper justification and executive-level clarity before advancing."
+        )
+    else:
+        verdict = "Deal Declined / Opportunity Lost"
+        summary = (
+            f"The {role} was unconvinced by value claims and perceived excessive risk. "
+            f"The pitch did not adequately address executive priorities."
+        )
+    return verdict, summary
 
 
 class SalesInterviewEvaluator:
@@ -94,7 +175,7 @@ class SalesInterviewEvaluator:
                 self.llm = ChatOpenAI(
                     base_url="https://genailab.tcs.in",
                     model="azure/genailab-maas-gpt-4o-mini",
-                    api_key=os.getenv("TCS_API_KEY", "sk-FHCqt-_flSjGm2TRjj1wXw"),
+                    api_key=os.getenv("TCS_API_KEY", "sk-FHCqt-_flSjGm2TRjj1wXw"),  # type: ignore[arg-type]
                     http_client=client,
                     temperature=0.0,
                 )
@@ -146,7 +227,7 @@ class SalesInterviewEvaluator:
                     "}"
                 )
                 response = llm.invoke([{"role": "system", "content": prompt}])
-                raw_content = response.content.strip()
+                raw_content = str(response.content).strip()
                 if "```json" in raw_content:
                     raw_content = raw_content.split("```json", 1)[1].split("```", 1)[0].strip()
                 elif "```" in raw_content:
@@ -267,8 +348,11 @@ class SalesInterviewEvaluator:
             topic=topic,
         )
 
-        # 3. Overall Readiness Score
-        readiness_score = calculate_overall_readiness_score(delivery_scorecard, strategic_scorecard)
+        # 3. Overall Readiness Score (Tri-Track: Delivery 30% + Strategic 50% + Momentum 20%)
+        momentum_score = compute_stakeholder_momentum(session_id)
+        readiness_score = calculate_overall_readiness_score(
+            delivery_scorecard, strategic_scorecard, momentum_score=momentum_score
+        )
 
         scorecard = SalesInterviewScorecard(
             session_id=session_id,

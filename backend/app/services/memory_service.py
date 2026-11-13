@@ -292,10 +292,10 @@ class StakeholderKnowledgeState:
         stage: Optional[Union[InterviewStage, Any]] = None,
     ) -> KnowledgeAccessDecision:
         """Deterministically decide if knowledge disclosure is permitted."""
-        if hasattr(candidate_trust, "trust"):
-            trust_val = float(candidate_trust.trust)
-        elif isinstance(candidate_trust, (int, float)):
+        if isinstance(candidate_trust, (int, float)):
             trust_val = float(candidate_trust)
+        elif hasattr(candidate_trust, "trust"):
+            trust_val = float(getattr(candidate_trust, "trust", 0.50))
         else:
             trust_val = 0.50
 

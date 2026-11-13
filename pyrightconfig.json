@@ -1,0 +1,17 @@
+{
+  "venvPath": "backend",
+  "venv": "venv",
+  "include": [
+    "backend"
+  ],
+  "extraPaths": [
+    "backend",
+    "backend/venv/Lib/site-packages",
+    "C:/Users/MounaSumaMandava/AppData/Roaming/Python/Python311/site-packages",
+    "C:/Program Files/Python311/Lib/site-packages"
+  ],
+  "pythonVersion": "3.11",
+  "typeCheckingMode": "basic",
+  "reportMissingImports": "warning",
+  "reportMissingModuleSource": "none"
+}
